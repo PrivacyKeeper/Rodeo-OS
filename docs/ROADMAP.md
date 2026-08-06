@@ -6,7 +6,7 @@ Follows Appendix C of the architecture, adjusted for what is already done.
 
 ## Done
 
-**Schema.** 24 tables across 12 migrations, with RLS bound to `auth.uid()`,
+**Schema.** 29 tables across 14 migrations, with RLS bound to `auth.uid()`,
 composite tenant foreign keys, append-only triggers on the ledger and on signed
 waivers, and system scoring and payout templates for PRCA, PBR, WPRA, NBHA,
 IPRA and CPRA.
@@ -22,9 +22,13 @@ tie combine-and-split, ground money, cowboy rules, escrow, multi-round go-round
 plus average, IPRA three-head 2:2:3, day money, stock contractor share, PESI
 60/40, and cross-border withholding for CA, AU and BR. Cent-exact throughout.
 
+**Options layer.** 287 seeded options across 16 domains, producer-extensible
+and tenant-scoped, replacing the hardcoded CHECK constraints. Sidepots and
+incentives, rodeo templates, and module entitlement per §3.2.
+
 **API contracts.** Route definitions with JSON Schema validation, JWT auth and
 the permission matrix, typed event bus, offline sync authority resolution,
-public results and SSE.
+options CRUD, public results and SSE.
 
 ---
 
@@ -46,6 +50,8 @@ complete list of what the data layer has to provide:
 | `changesSince` | sync |
 | `loadPublicResults` | public |
 | `loadStandings` | public |
+| `loadAllOptions` / `loadOptions` | options |
+| `createOption` / `updateOption` | options |
 
 Also needed:
 

@@ -154,4 +154,79 @@ do $$ declare n int; begin
   else raise exception 'FAIL rls: % table(s) without RLS', n; end if;
 end $$;
 
+-- ---------------------------------------------------------------- options
+-- The reference layer must be extensible per tenant without becoming a hole
+-- through which one tenant reads another's configuration.
+
+-- A system option is usable by anybody.
+do $$ begin
+  insert into rodeo_events (org_id, rodeo_id, event_type, scoring_mode)
+  values ('11111111-1111-4111-8111-111111111111',
+          'aaaaaaaa-1111-4111-8111-111111111111', 'wild_cow_milking', 'timed');
+  raise notice 'PASS options: a system option outside the old CHECK list is accepted';
+exception when others then
+  raise exception 'FAIL options: system option rejected -- %', sqlerrm;
+end $$;
+
+-- A producer's own option is usable by that producer.
+insert into reference_options (domain, code, label, org_id, is_system, category)
+values ('event_type', 'mounted_shooting', 'Cowboy Mounted Shooting',
+        '11111111-1111-4111-8111-111111111111', false, 'Other');
+
+do $$ begin
+  insert into rodeo_events (org_id, rodeo_id, event_type, scoring_mode)
+  values ('11111111-1111-4111-8111-111111111111',
+          'aaaaaaaa-1111-4111-8111-111111111111', 'mounted_shooting', 'timed');
+  raise notice 'PASS options: a producer custom option is accepted';
+exception when others then
+  raise exception 'FAIL options: custom option rejected -- %', sqlerrm;
+end $$;
+
+-- and by nobody else.
+insert into rodeos (id, org_id, name, slug, start_date, end_date, rodeo_type)
+values ('bbbbbbbb-2222-4222-8222-222222222222',
+        '22222222-2222-4222-8222-222222222222',
+        'B Rodeo', 'br', '2026-09-01', '2026-09-02', 'jackpot');
+
+do $$ begin
+  insert into rodeo_events (org_id, rodeo_id, event_type, scoring_mode)
+  values ('22222222-2222-4222-8222-222222222222',
+          'bbbbbbbb-2222-4222-8222-222222222222', 'mounted_shooting', 'timed');
+  raise exception 'FAIL options: one tenant used another tenant custom option';
+exception when foreign_key_violation then
+  raise notice 'PASS options: cross-tenant custom option rejected';
+end $$;
+
+-- An unknown value is still an error, not a free-text field.
+do $$ begin
+  insert into rodeo_events (org_id, rodeo_id, event_type, scoring_mode)
+  values ('11111111-1111-4111-8111-111111111111',
+          'aaaaaaaa-1111-4111-8111-111111111111', 'not_a_real_event', 'timed');
+  raise exception 'FAIL options: an unknown event type was accepted';
+exception when foreign_key_violation then
+  raise notice 'PASS options: unknown event type rejected';
+end $$;
+
+-- ---------------------------------------------------------------- modules
+insert into org_modules (org_id, module, tier)
+values ('11111111-1111-4111-8111-111111111111', 'sidepots', 'premium');
+
+do $$ begin
+  if org_has_module('11111111-1111-4111-8111-111111111111', 'sidepots')
+     and not org_has_module('22222222-2222-4222-8222-222222222222', 'sidepots')
+  then raise notice 'PASS modules: entitlement is per tenant';
+  else raise exception 'FAIL modules: entitlement leaked across tenants';
+  end if;
+end $$;
+
+update org_modules set expires_at = now() - interval '1 day'
+ where module = 'sidepots';
+
+do $$ begin
+  if not org_has_module('11111111-1111-4111-8111-111111111111', 'sidepots')
+  then raise notice 'PASS modules: an expired subscription reads as off';
+  else raise exception 'FAIL modules: expired subscription still entitled';
+  end if;
+end $$;
+
 rollback;

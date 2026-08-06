@@ -15,19 +15,24 @@ Rules were last reviewed against published sources on **8 August 2026** —
 what is sourced, what is not, and where each value came from is in
 [`docs/RULES.md`](docs/RULES.md).
 
+The product model — Procore for construction, Toast for restaurants, applied
+to rodeo — and what it demanded of the schema is in
+[`docs/MODEL.md`](docs/MODEL.md).
+
 ---
 
 ## What is here
 
 ```
-supabase/migrations/     Full schema: 24 tables, RLS, immutability triggers,
-                         system scoring/payout templates, handicap divisions
+supabase/migrations/     Full schema: 29 tables, RLS, immutability triggers,
+                         287 seeded options, scoring/payout/division templates
 supabase/tests/          Schema invariants, run in CI
 packages/engine/         Scoring and payout engines. Zero dependencies,
                          no I/O, 104 tests
 apps/api/                Fastify API: auth, typed event bus, offline sync,
                          scoring, payouts, public results
-docs/                    Architecture deltas, rule provenance, security, roadmap
+docs/                    The model, architecture deltas, rule provenance,
+                         security, roadmap
 ```
 
 ### The engine is the important part
@@ -45,6 +50,10 @@ Two properties it holds:
   loaded from `scoring_configs`, `payout_configs` and `division_templates`. A
   sanctioning body changing a rule mid-season is a new config row, never a
   deploy. PBR moving to tenth-point marking for 2026 was a data change.
+- **Every option is data too.** 48 event types, 34 arena roles, 25 fee types,
+  24 sanctioning bodies and eleven more domains live in `reference_options`,
+  and a producer adds their own without a migration. A ranch rodeo running
+  wild cow milking, or a playday running a keyhole race, does not need us.
 - **Money reconciles exactly.** All amounts are integer cents and every split
   is a largest-remainder allocation over the whole pool. The sum of the payout
   lines equals the net purse, to the cent, always. The API refuses to serve a
@@ -119,7 +128,9 @@ triggers bind the service role too. Full reasoning in
 
 | Area | State |
 |---|---|
-| Database schema | Complete — 24 tables, RLS, triggers, seed configs |
+| Database schema | Complete — 29 tables, RLS, triggers, 287 seeded options |
+| Options layer | Complete — every dropdown is producer-extensible data |
+| Sidepots, templates, modules | Schema complete |
 | Scoring engine | Complete and tested — judged, timed, ranking, aggregate, D-format, handicap divisions |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |

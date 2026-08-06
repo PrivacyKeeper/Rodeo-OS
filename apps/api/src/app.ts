@@ -11,6 +11,7 @@ import { TypedEventBus } from './core/events.ts';
 import { registerScoringModule } from './modules/scoring/routes.ts';
 import { registerPayoutsModule } from './modules/payouts/routes.ts';
 import { registerSyncModule } from './modules/sync/routes.ts';
+import { registerOptionsModule } from './modules/options/routes.ts';
 import { registerPublicModule } from './modules/public/routes.ts';
 
 declare module 'fastify' {
@@ -83,6 +84,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   await app.register(async (scoped) => {
     scoped.addHook('preHandler', makeAuthMiddleware(opts.verifier));
 
+    await scoped.register(registerOptionsModule);
     await scoped.register(registerScoringModule);
     await scoped.register(registerPayoutsModule);
     await scoped.register(registerSyncModule);
