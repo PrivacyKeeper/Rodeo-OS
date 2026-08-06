@@ -451,6 +451,61 @@ engine's own allocation and against the exact sum.
 
 ---
 
+## D25 — Drizzle replaced by postgres.js · S4
+
+**Spec** (Appendix A) selects Drizzle ORM for "type-safe SQL queries, zero
+runtime overhead."
+
+The reason for changing it is RLS. Isolation here depends on running each
+request inside a transaction that carries the caller's verified JWT claims and
+`set local role authenticated`. That is transaction-scoped session state, which
+is a driver concern, not an ORM one — and every repository query is hand-written
+SQL with joins and aggregation, so the query-builder half of Drizzle's value
+never applies. Adding an ORM on top of the driver would have meant maintaining a
+29-table schema definition purely to be bypassed by `sql\`...\`` at every call
+site.
+
+postgres.js gives the transaction control directly, and its tagged templates
+bind every interpolation as a parameter — so the "no string-built SQL" property
+is enforced by the API rather than by discipline.
+
+`apps/api/src/core/database/client.ts`
+
+---
+
+## D26 — `JSON.stringify(x)::jsonb` stores a string, not an object · S1
+
+Not in the architecture — introduced in this repository and caught by the
+integration tests before it reached anything.
+
+Writing JSONB as:
+
+```ts
+await tx`insert into scoring_configs (config) values (${JSON.stringify(cfg)}::jsonb)`
+```
+
+binds a **text** parameter, so the cast produces a jsonb *string scalar*.
+`jsonb_typeof()` returns `'string'`, and reading it back yields a JS string
+rather than an object. Spreading that string produces an object with numeric
+keys, which is truthy — so `loadScoringConfig()` returned something that looked
+like a config and had no `mode`, no `increment`, no penalties. Every rule in it
+silently vanished, and the scoring engine fell back to rejecting the run.
+
+The same pattern was on `judge_scores`, `time_penalties` and transaction
+metadata: judge cards and penalty records would have round-tripped as unusable
+text.
+
+**Fixed:** `tx.json(value)`, which binds a genuine JSON parameter. A regression
+test asserts `jsonb_typeof(config) = 'object'` and that the loaded config still
+carries its rules.
+
+This is the class of bug that unit tests cannot reach and a schema review does
+not show. It is the reason the integration suite exists.
+
+`apps/api/src/core/database/repositories.ts`, test `a stored config round-trips as an object, not a jsonb string`
+
+---
+
 ## Carried forward unchanged
 
 These are noted in the architecture and remain open. They are **not** defects —

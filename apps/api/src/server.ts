@@ -8,6 +8,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 import { buildApp } from './app.ts';
+import { Database, createSql } from './core/database/client.ts';
 import type { JWTPayload, TokenVerifier } from './core/auth.ts';
 
 function required(name: string): string {
@@ -34,7 +35,15 @@ function makeSupabaseVerifier(): TokenVerifier {
   };
 }
 
-const app = await buildApp({ verifier: makeSupabaseVerifier() });
+const db = new Database(
+  createSql({
+    connectionString: required('DATABASE_URL'),
+    max: Number(process.env.DB_POOL_MAX ?? 10),
+    ssl: process.env.NODE_ENV === 'production' ? 'require' : false,
+  }),
+);
+
+const app = await buildApp({ verifier: makeSupabaseVerifier(), db });
 
 const port = Number(process.env.PORT ?? 3001);
 await app.listen({ port, host: '0.0.0.0' });
@@ -45,7 +54,10 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     app.log.info({ signal }, 'shutting down');
     app.close().then(
-      () => process.exit(0),
+      async () => {
+        await db.close();
+        process.exit(0);
+      },
       (err) => {
         app.log.error(err, 'shutdown failed');
         process.exit(1);

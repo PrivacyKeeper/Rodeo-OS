@@ -7,6 +7,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { requirePermission } from '../../core/auth.ts';
+import { claimsFor } from '../../core/database/client.ts';
+import * as repo from '../../core/database/repositories.ts';
 import {
   resolveConflict,
   toConflict,
@@ -68,21 +70,26 @@ export const registerSyncModule: FastifyPluginAsync = async (fastify) => {
         a.timestamp.localeCompare(b.timestamp),
       );
 
-      for (const change of ordered) {
-        const serverState = await loadServerState(fastify, org_id, change);
-        const resolution = resolveConflict(change, serverState);
+      // The whole batch resolves inside ONE transaction. A device that has
+      // been offline all weekend either drains completely or not at all --
+      // half-applied sync leaves the arena reconciling by hand.
+      const claims = claimsFor(request.auth!);
+      const server_changes = await fastify.db.asUser(claims, async (tx) => {
+        for (const change of ordered) {
+          const serverState = await repo.loadServerState(tx, org_id, change);
+          const resolution = resolveConflict(change, serverState);
 
-        if (resolution.winner === 'client') {
-          await applyChange(fastify, org_id, change, request.auth!.user.user_id);
-          accepted.push(change.id);
-        } else {
-          rejected.push(
-            toConflict(change, resolution, serverState ?? ({} as ServerState)),
-          );
+          if (resolution.winner === 'client') {
+            await repo.applyChange(tx, org_id, change, request.auth!.user.user_id);
+            accepted.push(change.id);
+          } else {
+            rejected.push(
+              toConflict(change, resolution, serverState ?? ({} as ServerState)),
+            );
+          }
         }
-      }
-
-      const server_changes = await changesSince(fastify, org_id, last_sync_at);
+        return repo.changesSince(tx, org_id, last_sync_at);
+      });
 
       const response: SyncResponse = {
         accepted,
@@ -99,31 +106,4 @@ export const registerSyncModule: FastifyPluginAsync = async (fastify) => {
   );
 };
 
-// ---------------------------------------------------------------------------
-// Storage seam
-// ---------------------------------------------------------------------------
-
-async function loadServerState(
-  _fastify: unknown,
-  _orgId: string,
-  _change: SyncChange,
-): Promise<ServerState | null> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function applyChange(
-  _fastify: unknown,
-  _orgId: string,
-  _change: SyncChange,
-  _actorId: string,
-): Promise<void> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function changesSince(
-  _fastify: unknown,
-  _orgId: string,
-  _since: string,
-): Promise<SyncResponse['server_changes']> {
-  throw new Error('not implemented: wire to core/database');
-}
+// Storage lives in core/database/repositories.ts.

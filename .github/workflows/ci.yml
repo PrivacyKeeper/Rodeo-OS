@@ -69,3 +69,47 @@ jobs:
             -f supabase/tests/invariants.sql 2>&1 | tee /tmp/inv.log
           if grep -q FAIL /tmp/inv.log; then exit 1; fi
           echo "all invariants passed"
+
+  integration:
+    name: API against real Postgres with RLS
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+
+      # Supabase provides auth.uid() and the anon/authenticated/service_role
+      # roles. Plain Postgres does not, so the bootstrap stands in for them --
+      # which is what lets these tests exercise RLS as a real user rather than
+      # as a superuser who bypasses it.
+      - name: Prepare database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
+            -f supabase/local/bootstrap.sql
+          for f in supabase/migrations/*.sql; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          # Re-run for grants on the tables the migrations just created.
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
+            -f supabase/local/bootstrap.sql
+
+      - name: Integration tests
+        working-directory: apps/api
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: node --test "test/*.test.ts"

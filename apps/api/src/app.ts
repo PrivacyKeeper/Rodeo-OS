@@ -7,6 +7,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { AuthError, makeAuthMiddleware, type TokenVerifier } from './core/auth.ts';
+import type { Database } from './core/database/client.ts';
 import { TypedEventBus } from './core/events.ts';
 import { registerScoringModule } from './modules/scoring/routes.ts';
 import { registerPayoutsModule } from './modules/payouts/routes.ts';
@@ -17,11 +18,13 @@ import { registerPublicModule } from './modules/public/routes.ts';
 declare module 'fastify' {
   interface FastifyInstance {
     eventBus: TypedEventBus;
+    db: Database;
   }
 }
 
 export interface BuildOptions {
   verifier: TokenVerifier;
+  db: Database;
   logger?: boolean;
 }
 
@@ -35,9 +38,16 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   });
 
   app.decorate('eventBus', new TypedEventBus());
+  app.decorate('db', opts.db);
 
   // ---- Uniform response envelope (§4.6) -----------------------------------
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((err, request, reply) => {
+    const error = err as Error & {
+      statusCode?: number;
+      code?: string;
+      details?: unknown;
+    };
+
     if (error instanceof AuthError) {
       return reply.status(error.status).send({
         error: {
@@ -72,10 +82,13 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     });
   });
 
-  app.get('/health', async () => ({
-    data: { status: 'ok' },
-    meta: { timestamp: new Date().toISOString() },
-  }));
+  app.get('/health', async (_req, reply) => {
+    const dbOk = await app.db.healthy();
+    return reply.status(dbOk ? 200 : 503).send({
+      data: { status: dbOk ? 'ok' : 'degraded', database: dbOk },
+      meta: { timestamp: new Date().toISOString() },
+    });
+  });
 
   // ---- Public routes: no auth ---------------------------------------------
   await app.register(registerPublicModule, { prefix: '/v1/public' });

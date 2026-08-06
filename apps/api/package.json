@@ -6,15 +6,16 @@
   "scripts": {
     "dev": "node --watch src/server.ts",
     "start": "node src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@rodeo-os/engine": "*",
     "fastify": "^5.11.2",
     "@fastify/rate-limit": "^10.3.0",
     "@supabase/supabase-js": "^2.111.0",
-    "drizzle-orm": "^0.45.2",
-    "jose": "^6.2.8"
+    "jose": "^6.2.8",
+    "postgres": "^3.4.5"
   },
   "devDependencies": {
     "@types/node": "^24.0.0"

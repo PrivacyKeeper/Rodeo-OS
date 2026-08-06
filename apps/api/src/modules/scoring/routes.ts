@@ -18,6 +18,8 @@ import {
 } from '@rodeo-os/engine';
 
 import { requirePermission } from '../../core/auth.ts';
+import { claimsFor } from '../../core/database/client.ts';
+import * as repo from '../../core/database/repositories.ts';
 
 interface SubmitScoreBody {
   entry_id: string;
@@ -134,7 +136,13 @@ export const registerScoringModule: FastifyPluginAsync = async (fastify) => {
       const { org_id, rodeo_id, event_id } = request.params;
       const body = request.body;
 
-      const config = await loadScoringConfig(fastify, body.scoring_config_id);
+      // Every database call in this handler runs as the caller, so RLS is what
+      // decides whether this config and this entry are theirs to touch.
+      const claims = claimsFor(request.auth!);
+
+      const config = await fastify.db.asUser(claims, (tx) =>
+        repo.loadScoringConfig(tx, body.scoring_config_id),
+      );
       if (!config) {
         return reply.status(404).send({
           error: {
@@ -182,22 +190,24 @@ export const registerScoringModule: FastifyPluginAsync = async (fastify) => {
 
       // Persistence is the storage layer's job; this module hands it a value
       // object it has already validated.
-      await persistScore(fastify, {
-        id: scoreId,
-        org_id,
-        rodeo_id,
-        rodeo_event_id: event_id,
-        entry_id: body.entry_id,
-        contestant_id: body.contestant_id,
-        go_round: body.go_round ?? 1,
-        performance: body.performance,
-        animal_id: body.animal_id,
-        scoring_config_id: body.scoring_config_id,
-        source: body.source ?? 'manual',
-        hardware_timestamp: body.hardware_timestamp,
-        entered_by: request.auth!.user.user_id,
-        result,
-      });
+      await fastify.db.asUser(claims, (tx) =>
+        repo.persistScore(tx, {
+          id: scoreId,
+          org_id,
+          rodeo_id,
+          rodeo_event_id: event_id,
+          entry_id: body.entry_id,
+          contestant_id: body.contestant_id,
+          go_round: body.go_round ?? 1,
+          performance: body.performance,
+          animal_id: body.animal_id,
+          scoring_config_id: body.scoring_config_id,
+          source: body.source ?? 'manual',
+          hardware_timestamp: body.hardware_timestamp,
+          entered_by: request.auth!.user.user_id,
+          result,
+        }),
+      );
 
       fastify.eventBus.emit('score.submitted', {
         org_id,
@@ -237,7 +247,22 @@ export const registerScoringModule: FastifyPluginAsync = async (fastify) => {
     { preHandler: requirePermission('score.correct') },
     async (request, reply) => {
       const { org_id, score_id } = request.params;
-      const score = await finalizeScore(fastify, org_id, score_id);
+      const score = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.finalizeScore(tx, org_id, score_id, request.auth!.user.user_id),
+      );
+
+      // Null covers three cases: no such score, it belongs to another tenant,
+      // or somebody already finalised it. All three are a 404 to the caller —
+      // distinguishing them would confirm another tenant's record exists.
+      if (!score) {
+        return reply.status(404).send({
+          error: {
+            code: 'SCORE_NOT_FINALIZABLE',
+            message: 'No provisional score with that id.',
+          },
+          meta: { request_id: request.id },
+        });
+      }
 
       fastify.eventBus.emit('score.finalized', {
         org_id,
@@ -245,34 +270,10 @@ export const registerScoringModule: FastifyPluginAsync = async (fastify) => {
         rodeo_event_id: score.rodeo_event_id,
       });
 
-      return reply.send({
-        data: score,
-        meta: { request_id: request.id },
-      });
+      return reply.send({ data: score, meta: { request_id: request.id } });
     },
   );
 };
 
-// ---------------------------------------------------------------------------
-// Storage seam. Implemented against Drizzle in src/core/database; declared here
-// so the module's contract with persistence is explicit and mockable.
-// ---------------------------------------------------------------------------
-
-async function loadScoringConfig(
-  _fastify: unknown,
-  _id: string,
-): Promise<ScoringConfig | null> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function persistScore(_fastify: unknown, _score: unknown): Promise<void> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function finalizeScore(
-  _fastify: unknown,
-  _orgId: string,
-  _scoreId: string,
-): Promise<{ rodeo_event_id: string }> {
-  throw new Error('not implemented: wire to core/database');
-}
+// Storage lives in core/database/repositories.ts. This module holds request
+// shape, permissions and the engine call; it does not build SQL.

@@ -32,38 +32,27 @@ options CRUD, public results and SSE.
 
 ---
 
-## Next: wire persistence
+## Done — persistence
 
-Nothing else can be demonstrated until this is done. Every API module declares
-its storage needs as named functions that currently throw. They are the
-complete list of what the data layer has to provide:
+Every storage function the API modules declared is implemented and tested
+against a real PostgreSQL database with RLS enabled.
 
-| Function | Module |
-|---|---|
-| `loadScoringConfig` | scoring |
-| `persistScore` | scoring |
-| `finalizeScore` | scoring |
-| `loadPayoutContext` | payouts |
-| `disburse` | payouts |
-| `loadServerState` | sync |
-| `applyChange` | sync |
-| `changesSince` | sync |
-| `loadPublicResults` | public |
-| `loadStandings` | public |
-| `loadAllOptions` / `loadOptions` | options |
-| `createOption` / `updateOption` | options |
+- `core/database/client.ts` — pooled connections plus `asUser()`, `asAnon()`
+  and `asService()`. `asUser()` opens a transaction, binds the caller's
+  verified JWT claims via `set_config` as a **parameter**, and switches to the
+  `authenticated` role, so every query is filtered by policy rather than by
+  application code. `asService()` bypasses RLS and requires a written reason.
+- `core/database/repositories.ts` — options, scoring, payouts, sync and public
+  reads. All money converts to integer cents in exactly one place.
+- `apps/api/test/persistence.test.ts` — 32 tests, run **as real users**.
 
-Also needed:
+Still to wire:
 
-1. Drizzle schema generated from the migrations, plus a Supabase client factory
-   that binds the caller's access token per request so RLS applies.
-2. A Supabase Auth custom-access-token hook that writes `user_id` and
+1. Supabase Auth custom-access-token hook writing `user_id` and
    `org_memberships` into the JWT from `org_members`.
-3. Stripe Connect onboarding for organisations and for contestants who receive
-   payouts.
-
-Deliverable: a rodeo can be created, entered, scored and paid out end to end
-through the API.
+2. Stripe Connect: onboarding for producers and for contestants who receive
+   payouts, and the transfer that moves a `pending` ledger row to `completed`.
+3. Entry and draw endpoints — the schema is there, the routes are not.
 
 ---
 

@@ -13,6 +13,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { isUuid } from '../../core/auth.ts';
+import * as repo from '../../core/database/repositories.ts';
 
 export const registerPublicModule: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { rodeo_id: string } }>(
@@ -25,7 +26,18 @@ export const registerPublicModule: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const results = await loadPublicResults(fastify, request.params.rodeo_id);
+      // Anonymous: only the public-read policies match, so a draft rodeo or a
+      // provisional score cannot escape through this route.
+      const results = await fastify.db.asAnon((tx) =>
+        repo.loadPublicResults(tx, request.params.rodeo_id),
+      );
+
+      if (!results) {
+        return reply.status(404).send({
+          error: { code: 'RODEO_NOT_FOUND', message: 'No published rodeo with that id.' },
+          meta: { request_id: request.id },
+        });
+      }
 
       // Results change slowly once official; let the edge serve them.
       reply.header('cache-control', 'public, max-age=30, stale-while-revalidate=300');
@@ -92,11 +104,13 @@ export const registerPublicModule: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Params: { body: string; season: string; event_type: string };
   }>('/standings/:body/:season/:event_type', async (request, reply) => {
-    const standings = await loadStandings(
-      fastify,
-      request.params.body,
-      request.params.season,
-      request.params.event_type,
+    const standings = await fastify.db.asAnon((tx) =>
+      repo.loadStandings(
+        tx,
+        request.params.body,
+        request.params.season,
+        request.params.event_type,
+      ),
     );
 
     reply.header('cache-control', 'public, max-age=300');
@@ -107,19 +121,4 @@ export const registerPublicModule: FastifyPluginAsync = async (fastify) => {
   });
 };
 
-// ---------------------------------------------------------------------------
-// Storage seam
-// ---------------------------------------------------------------------------
-
-async function loadPublicResults(_fastify: unknown, _rodeoId: string): Promise<unknown> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function loadStandings(
-  _fastify: unknown,
-  _body: string,
-  _season: string,
-  _eventType: string,
-): Promise<unknown> {
-  throw new Error('not implemented: wire to core/database');
-}
+// Storage lives in core/database/repositories.ts.

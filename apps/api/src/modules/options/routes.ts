@@ -14,6 +14,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { requirePermission } from '../../core/auth.ts';
+import { claimsFor } from '../../core/database/client.ts';
+import * as repo from '../../core/database/repositories.ts';
 
 /**
  * The domains the product exposes. Kept as a closed list here even though the
@@ -80,7 +82,9 @@ export const registerOptionsModule: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { org_id: string } }>(
     '/options',
     async (request, reply) => {
-      const all = await loadAllOptions(fastify, request.params.org_id);
+      const all = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.loadAllOptions(tx, request.params.org_id),
+      );
 
       const grouped: Record<string, OptionGroup[]> = {};
       for (const domain of OPTION_DOMAINS) {
@@ -112,7 +116,9 @@ export const registerOptionsModule: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const options = await loadOptions(fastify, org_id, domain);
+      const options = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.loadOptions(tx, org_id, domain),
+      );
 
       reply.header('cache-control', 'private, max-age=60');
       return reply.send({
@@ -178,7 +184,25 @@ export const registerOptionsModule: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const created = await createOption(fastify, org_id, domain, request.body);
+      let created;
+      try {
+        created = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+          repo.createOption(tx, org_id, domain, request.body),
+        );
+      } catch (err) {
+        // A producer reusing a code they already defined is a conflict, not a
+        // server error -- the unique index is doing its job.
+        if ((err as { code?: string }).code === '23505') {
+          return reply.status(409).send({
+            error: {
+              code: 'OPTION_ALREADY_EXISTS',
+              message: `'${request.body.code}' already exists in '${domain}'.`,
+            },
+            meta: { request_id: request.id },
+          });
+        }
+        throw err;
+      }
 
       return reply.status(201).send({
         data: created,
@@ -214,12 +238,8 @@ export const registerOptionsModule: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { org_id, domain, code } = request.params;
-      const updated = await updateOption(
-        fastify,
-        org_id,
-        domain,
-        code,
-        request.body,
+      const updated = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.updateOption(tx, org_id, domain, code, request.body),
       );
 
       if (!updated) {
@@ -239,42 +259,4 @@ export const registerOptionsModule: FastifyPluginAsync = async (fastify) => {
   );
 };
 
-// ---------------------------------------------------------------------------
-// Storage seam
-// ---------------------------------------------------------------------------
-
-type StoredOption = ReferenceOption & { domain: string };
-
-async function loadAllOptions(
-  _fastify: unknown,
-  _orgId: string,
-): Promise<StoredOption[]> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function loadOptions(
-  _fastify: unknown,
-  _orgId: string,
-  _domain: string,
-): Promise<ReferenceOption[]> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function createOption(
-  _fastify: unknown,
-  _orgId: string,
-  _domain: string,
-  _body: unknown,
-): Promise<ReferenceOption> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function updateOption(
-  _fastify: unknown,
-  _orgId: string,
-  _domain: string,
-  _code: string,
-  _body: unknown,
-): Promise<ReferenceOption | null> {
-  throw new Error('not implemented: wire to core/database');
-}
+// Storage lives in core/database/repositories.ts.

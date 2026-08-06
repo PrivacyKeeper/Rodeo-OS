@@ -20,6 +20,8 @@ import {
 } from '@rodeo-os/engine';
 
 import { requirePermission } from '../../core/auth.ts';
+import { claimsFor } from '../../core/database/client.ts';
+import * as repo from '../../core/database/repositories.ts';
 
 export const registerPayoutsModule: FastifyPluginAsync = async (fastify) => {
   /**
@@ -49,7 +51,22 @@ export const registerPayoutsModule: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { org_id, event_id } = request.params;
 
-      const ctx = await loadPayoutContext(fastify, org_id, event_id, request.body.payout_config_id);
+      const claims = claimsFor(request.auth!);
+      const ctx = await fastify.db.asUser(claims, (tx) =>
+        repo.loadPayoutContext(tx, org_id, event_id, request.body.payout_config_id),
+      );
+
+      if (!ctx) {
+        return reply.status(404).send({
+          error: {
+            code: 'PAYOUT_CONTEXT_NOT_FOUND',
+            message:
+              'No such event, or it has no payout config. Set one on the event ' +
+              'or pass payout_config_id.',
+          },
+          meta: { request_id: request.id },
+        });
+      }
 
       const result: PayoutResult = ctx.config.go_round_average_split
         ? calculateMultiRoundPayout({
@@ -134,18 +151,19 @@ export const registerPayoutsModule: FastifyPluginAsync = async (fastify) => {
    */
   fastify.post<{
     Params: { org_id: string; rodeo_id: string };
-    Body: { idempotency_key: string; confirm: boolean };
+    Body: { idempotency_key: string; confirm: boolean; rodeo_event_id: string };
   }>(
     '/rodeos/:rodeo_id/payouts/disburse',
     {
       schema: {
         body: {
           type: 'object',
-          required: ['idempotency_key', 'confirm'],
+          required: ['idempotency_key', 'confirm', 'rodeo_event_id'],
           additionalProperties: false,
           properties: {
             idempotency_key: { type: 'string', minLength: 8, maxLength: 128 },
             confirm: { type: 'boolean', const: true },
+            rodeo_event_id: { type: 'string', format: 'uuid' },
           },
         },
       },
@@ -153,52 +171,101 @@ export const registerPayoutsModule: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { org_id, rodeo_id } = request.params;
-      const out = await disburse(
-        fastify,
-        org_id,
-        rodeo_id,
-        request.body.idempotency_key,
-        request.auth!.user.user_id,
+
+      // Recalculated here rather than trusting numbers posted by the client.
+      // The caller says WHICH event to pay, never HOW MUCH — otherwise the
+      // whole cent-exact engine is decoration.
+      const claims = claimsFor(request.auth!);
+      const ctx = await fastify.db.asUser(claims, (tx) =>
+        repo.loadPayoutContext(tx, org_id, request.body.rodeo_event_id),
       );
 
+      if (!ctx) {
+        return reply.status(404).send({
+          error: { code: 'PAYOUT_CONTEXT_NOT_FOUND', message: 'No such event.' },
+          meta: { request_id: request.id },
+        });
+      }
+
+      const calculated = ctx.config.go_round_average_split
+        ? calculateMultiRoundPayout({
+            payout_config: ctx.config,
+            scoring_mode: ctx.scoring_mode,
+            entries: ctx.entries,
+            added_money_cents: ctx.added_money_cents,
+            entry_fee_cents: ctx.entry_fee_cents,
+            results_by_round: ctx.results_by_round,
+            average_results: ctx.average_results,
+          })
+        : calculatePayout({
+            payout_config: ctx.config,
+            scoring_mode: ctx.scoring_mode,
+            entries: ctx.entries,
+            added_money_cents: ctx.added_money_cents,
+            entry_fee_cents: ctx.entry_fee_cents,
+            results: ctx.results,
+          });
+
+      if (!calculated.ok) {
+        return reply.status(422).send({
+          error: {
+            code: 'PAYOUT_CALCULATION_FAILED',
+            message: 'The payout could not be calculated; nothing was disbursed.',
+            details: { issues: calculated.issues },
+          },
+          meta: { request_id: request.id },
+        });
+      }
+
+      const disbursed = calculated.payouts.reduce((s, p) => s + p.amount_cents, 0);
+      if (
+        disbursed + calculated.unpaid_cents + calculated.escrow_cents !==
+        calculated.net_purse_cents
+      ) {
+        request.log.error({ org_id, rodeo_id }, 'payout does not reconcile');
+        return reply.status(500).send({
+          error: {
+            code: 'PAYOUT_DOES_NOT_RECONCILE',
+            message: 'Internal reconciliation failed; nothing was written.',
+          },
+          meta: { request_id: request.id },
+        });
+      }
+
+      // Ledger write and idempotency check share one transaction, so a
+      // concurrent duplicate request blocks on the unique index rather than
+      // racing past it.
+      const out = await fastify.db.asUser(claims, (tx) =>
+        repo.disburse(
+          tx,
+          org_id,
+          rodeo_id,
+          request.body.idempotency_key,
+          request.auth!.user.user_id,
+          calculated.payouts.map((p) => ({
+            contestant_id: p.contestant_id,
+            amount_cents: p.amount_cents,
+            type: p.type,
+            place: p.place,
+            go_round: p.go_round,
+            d_division: p.d_division,
+          })),
+        ),
+      );
+
+      if (!out.already_disbursed) {
+        fastify.eventBus.emit('payout.disbursed', {
+          org_id,
+          transaction_id: out.idempotency_key,
+        });
+      }
+
       return reply.send({
-        data: out,
+        data: { ...out, display_total: formatCents(out.total_cents) },
         meta: { request_id: request.id },
       });
     },
   );
 };
 
-// ---------------------------------------------------------------------------
-// Storage seam
-// ---------------------------------------------------------------------------
-
-interface PayoutContext {
-  config: PayoutConfig;
-  scoring_mode: 'judged' | 'timed';
-  entries: { contestant_id: string; status: string; entry_fee_cents?: number }[];
-  results: { contestant_id: string; status: string; final_score?: number | null; final_time?: number | null }[];
-  results_by_round: Map<number, PayoutContext['results']>;
-  average_results: PayoutContext['results'];
-  added_money_cents: number;
-  entry_fee_cents: number;
-}
-
-async function loadPayoutContext(
-  _fastify: unknown,
-  _orgId: string,
-  _eventId: string,
-  _configId?: string,
-): Promise<PayoutContext> {
-  throw new Error('not implemented: wire to core/database');
-}
-
-async function disburse(
-  _fastify: unknown,
-  _orgId: string,
-  _rodeoId: string,
-  _idempotencyKey: string,
-  _actorId: string,
-): Promise<unknown> {
-  throw new Error('not implemented: wire to integrations/stripe');
-}
+// Storage lives in core/database/repositories.ts.

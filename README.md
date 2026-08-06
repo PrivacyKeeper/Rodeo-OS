@@ -8,7 +8,7 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Twenty-four defects are recorded; several
+before assuming the code is wrong.** Twenty-six defects are recorded; several
 of them lose money or leak data.
 
 Rules were last reviewed against published sources on **8 August 2026** —
@@ -29,8 +29,8 @@ supabase/migrations/     Full schema: 29 tables, RLS, immutability triggers,
 supabase/tests/          Schema invariants, run in CI
 packages/engine/         Scoring and payout engines. Zero dependencies,
                          no I/O, 104 tests
-apps/api/                Fastify API: auth, typed event bus, offline sync,
-                         scoring, payouts, public results
+apps/api/                Fastify API: auth, RLS-bound persistence, typed event
+                         bus, offline sync, scoring, payouts, options, public
 docs/                    The model, architecture deltas, rule provenance,
                          security, roadmap
 ```
@@ -64,6 +64,11 @@ $ cd packages/engine && node --test "test/*.test.ts"
 # tests 104
 # pass 104
 # fail 0
+
+$ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
+# tests 32
+# pass 32
+# fail 0
 ```
 
 No `npm install` needed to run them — that is deliberate.
@@ -78,7 +83,7 @@ No `npm install` needed to run them — that is deliberate.
 | Database | PostgreSQL 16 on Supabase, row-level security |
 | Auth | Supabase Auth (JWT), roles via `org_members` |
 | Payments | Stripe Connect |
-| Data access | Drizzle ORM |
+| Data access | postgres.js, RLS-bound per request (see delta D25) |
 | Realtime | WebSockets for arena terminals, SSE for spectators |
 | Offline | PWA + IndexedDB, authority-based sync reconciliation |
 | Hosting | Vercel (web), Fly.io (API), Supabase (data) |
@@ -101,9 +106,18 @@ cd packages/engine && node --test "test/*.test.ts"
 # schema
 supabase db push          # or: psql -f supabase/migrations/*.sql in order
 
+# local Postgres instead of Supabase? add the auth primitives first
+psql -f supabase/local/bootstrap.sql
+for f in supabase/migrations/*.sql; do psql -f "$f"; done
+psql -f supabase/local/bootstrap.sql   # again, for grants on new tables
+
 # API
 npm install
 npm run dev --workspace @rodeo-os/api
+
+# integration tests against a real database with RLS on
+cd apps/api
+TEST_DATABASE_URL=postgres://... node --test "test/*.test.ts"
 ```
 
 Requires Node 24 LTS (Active LTS until 20 October 2026). Native TypeScript
@@ -134,14 +148,16 @@ triggers bind the service role too. Full reasoning in
 | Scoring engine | Complete and tested — judged, timed, ranking, aggregate, D-format, handicap divisions |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | **Not implemented.** Storage functions throw; see below |
+| API persistence | Complete — repositories, RLS-bound connections, 32 integration tests |
+| Stripe Connect | Not started — ledger rows are written `pending` |
 | Web app (PWA) | Not started |
 | Timer Bridge | Not started |
 
-The API modules define their storage needs as explicit named functions that
-currently throw `not implemented: wire to core/database`. That is the seam
-where Drizzle goes. It is marked rather than faked so nothing looks finished
-that is not.
+Every request opens a transaction carrying the caller's verified JWT claims and
+`set local role authenticated`, so RLS — not application code — decides what
+each request can see. The integration suite proves it by running **as real
+users**: a superuser bypasses RLS, so a test that passes as `postgres` proves
+nothing about whether one producer can read another's entries.
 
 Build order and what comes next: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
