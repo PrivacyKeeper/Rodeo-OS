@@ -8,21 +8,26 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Twenty defects were found in v1.0; several
+before assuming the code is wrong.** Twenty-four defects are recorded; several
 of them lose money or leak data.
+
+Rules were last reviewed against published sources on **8 August 2026** —
+what is sourced, what is not, and where each value came from is in
+[`docs/RULES.md`](docs/RULES.md).
 
 ---
 
 ## What is here
 
 ```
-supabase/migrations/     Full schema: 22 tables, RLS, immutability triggers,
-                         system scoring and payout templates
+supabase/migrations/     Full schema: 24 tables, RLS, immutability triggers,
+                         system scoring/payout templates, handicap divisions
+supabase/tests/          Schema invariants, run in CI
 packages/engine/         Scoring and payout engines. Zero dependencies,
-                         no I/O, 80 tests
+                         no I/O, 104 tests
 apps/api/                Fastify API: auth, typed event bus, offline sync,
                          scoring, payouts, public results
-docs/                    Architecture deltas, security model, roadmap
+docs/                    Architecture deltas, rule provenance, security, roadmap
 ```
 
 ### The engine is the important part
@@ -35,10 +40,11 @@ signal.
 
 Two properties it holds:
 
-- **Every rule is data.** Increments, variance caps, penalty tables, payout
-  ladders, ground-money behaviour, division splits — all loaded from
-  `scoring_configs` and `payout_configs`. A sanctioning body changing a rule
-  mid-season is a new config row, never a deploy.
+- **Every rule is data.** Increments, variance caps, judge counts, penalty
+  tables, payout ladders, ground-money behaviour, handicap division caps — all
+  loaded from `scoring_configs`, `payout_configs` and `division_templates`. A
+  sanctioning body changing a rule mid-season is a new config row, never a
+  deploy. PBR moving to tenth-point marking for 2026 was a data change.
 - **Money reconciles exactly.** All amounts are integer cents and every split
   is a largest-remainder allocation over the whole pool. The sum of the payout
   lines equals the net purse, to the cent, always. The API refuses to serve a
@@ -46,8 +52,8 @@ Two properties it holds:
 
 ```
 $ cd packages/engine && node --test "test/*.test.ts"
-# tests 80
-# pass 80
+# tests 104
+# pass 104
 # fail 0
 ```
 
@@ -59,10 +65,11 @@ No `npm install` needed to run them — that is deliberate.
 
 | Layer | Choice |
 |---|---|
-| API | Fastify 5 on Node 22 LTS, TypeScript strict |
-| Database | PostgreSQL on Supabase, row-level security |
+| API | Fastify 5.11 on Node 24 LTS, TypeScript 6 strict |
+| Database | PostgreSQL 16 on Supabase, row-level security |
 | Auth | Supabase Auth (JWT), roles via `org_members` |
 | Payments | Stripe Connect |
+| Data access | Drizzle ORM |
 | Realtime | WebSockets for arena terminals, SSE for spectators |
 | Offline | PWA + IndexedDB, authority-based sync reconciliation |
 | Hosting | Vercel (web), Fly.io (API), Supabase (data) |
@@ -90,7 +97,8 @@ npm install
 npm run dev --workspace @rodeo-os/api
 ```
 
-Requires Node 22.18 or later (native TypeScript type stripping).
+Requires Node 24 LTS (Active LTS until 20 October 2026). Native TypeScript
+type stripping means the engine runs without a build step.
 
 ---
 
@@ -111,8 +119,8 @@ triggers bind the service role too. Full reasoning in
 
 | Area | State |
 |---|---|
-| Database schema | Complete — 22 tables, RLS, triggers, seed configs |
-| Scoring engine | Complete and tested — judged, timed, ranking, aggregate, D-format |
+| Database schema | Complete — 24 tables, RLS, triggers, seed configs |
+| Scoring engine | Complete and tested — judged, timed, ranking, aggregate, D-format, handicap divisions |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
 | API persistence | **Not implemented.** Storage functions throw; see below |

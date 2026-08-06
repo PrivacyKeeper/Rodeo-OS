@@ -6,15 +6,16 @@ Follows Appendix C of the architecture, adjusted for what is already done.
 
 ## Done
 
-**Schema.** 22 tables across 10 migrations, with RLS bound to `auth.uid()`,
+**Schema.** 24 tables across 12 migrations, with RLS bound to `auth.uid()`,
 composite tenant foreign keys, append-only triggers on the ledger and on signed
 waivers, and system scoring and payout templates for PRCA, PBR, WPRA, NBHA,
 IPRA and CPRA.
 
 **Scoring engine.** Judged and timed modes, config-driven validation
-(range, increment, judge count, variance cap, mark-out, DQ triggers), standard
-competition ranking with tie detection, multi-round aggregation, D-format
-division assignment.
+(range, increment, judge count, score divisor, variance cap, mark-out, DQ
+triggers), standard competition ranking with tie detection, multi-round
+aggregation, D-format division assignment, and USTRC/WSTR handicap division
+eligibility.
 
 **Payout engine.** Fee deduction with destinations, payout ladder selection,
 tie combine-and-split, ground money, cowboy rules, escrow, multi-round go-round
@@ -93,14 +94,26 @@ through the API.
 
 ## Blocked on outside information
 
-These cannot be built correctly from what is available. Each is Appendix B of
-the architecture; none has moved.
+These cannot be built correctly from what is available. Most are Appendix B of
+the architecture. Two moved on 8 August 2026 — see [`RULES.md`](RULES.md).
+
+**Resolved since the last review:**
+
+- PBR's 2026 judge structure, tenth-point increment and 3.0 variance cap are
+  sourced from PBR's own announcement. The config was wrong (one judge at 0–50
+  rather than four at 0–25) and is fixed.
+- PRCA and WPRA scoring and timed-event penalties are confirmed and the
+  templates are no longer flagged unverified.
+
+**Still blocked:**
 
 | Needed | Blocks | How to get it |
 |---|---|---|
-| PRCA rulebook penalty and fee tables | Certified PRCA configs | PRCA member access |
-| PBR 2026 full variance provisions | Certified PBR config | PBR membership packet |
+| PRCA full fee schedule | Producer fee structures | PRCA member access |
 | CPRA number-of-monies thresholds | Canadian payout ladders | CPRA rulebook PDF |
+| USTRC 2026 division ladder | `USTRC Standard Ladder 2026` | USTRC rulebook |
+| WSTR 2026 division ladder beyond the #7.5 | `WSTR Standard Ladder 2026` | WSTR rulebook |
+| Elite rule wording | `elite_excluded` on both ladders | USTRC / WSTR |
 | PROCOM file format | Entry import, results export | PRCA IT, sample day sheets |
 | Stripe Connect Express in AU | AU contractor payouts | Stripe docs |
 | NBHA >12-place approval process | Large NBHA jackpots | NBHA |
@@ -114,9 +127,9 @@ in its config and must not be used for a sanctioned rodeo.
 
 ## Three rule conflicts still unresolved
 
-Flagged during the discipline-site build and not settled since. Each needs a
-decision from the sanctioning body before the affected config can be marked
-verified:
+Flagged during the discipline-site build and still open as of 8 August 2026.
+Each needs a decision from the sanctioning body before the affected config can
+be marked verified — they are judgement calls, not facts to look up:
 
 1. **Crossfire standard** — is the violation judged at rope release or at
    contact?

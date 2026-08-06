@@ -1,5 +1,7 @@
 # Deltas from Architecture v1.0
 
+Last reviewed: **8 August 2026**
+
 This repository implements *RodeoApps.pro OS — Complete Technical Architecture*,
 Version 1.0, 17 June 2026.
 
@@ -375,6 +377,80 @@ precision (`time_precision` for timed events, hundredths for judged).
 
 ---
 
+## D21 — PBR is scored by four judges, not one · S1
+
+**Seeded wrongly here, not in the architecture.** The architecture leaves PBR's
+judge structure unspecified; the config first seeded in this repository modelled
+a single judge marking the rider 0–50 and the bull 0–50.
+
+PBR runs **four** judges. Each marks the rider 0–25 and the bull 0–25, and the
+eight marks are combined and divided by two for the official score out of 100.
+The wrong model has two consequences: a single judge's card validates as a
+complete ride, and once four real cards arrive a 90-point ride records as 180.
+
+**Built instead:** a `score_divisor` on the scoring config, applied to the rider
+total, the animal total and the final score. PRCA sums two judges straight to
+100 with a divisor of 1; PBR divides eight marks by 2. The variance cap is
+evaluated on the post-divisor scores, which is the scale the published 3.0 cap
+refers to.
+
+`supabase/migrations/0012_rules_2026_corrections.sql`,
+`packages/engine/src/scoring/judged.ts`, test `combines eight marks and divides by two`
+
+---
+
+## D22 — Barrel knockdowns were charged once however many fell · S2
+
+The engine defaults a penalty to non-repeatable, which is correct for a barrier
+break and wrong for barrels. The seeded WPRA barrel racing config never set
+`repeatable`, so a two-barrel run was charged 5 seconds instead of 10.
+
+**Built instead:** `repeatable: true` on every barrel-knockdown rule, set for
+barrel racing, junior barrel racing and pole bending.
+
+`supabase/migrations/0012_rules_2026_corrections.sql`
+
+---
+
+## D23 — Numbered roping divisions did not exist · S4
+
+Architecture v1.0 models open competition only. USTRC and WSTR run classified
+divisions: every roper carries a handicap number, a team's numbers must total
+no more than the division, and most divisions cap each end separately so a
+high-numbered header cannot carry a beginner heeler into a soft field. That is
+the format the majority of this platform's ropers enter — the schema could not
+represent its own core audience.
+
+A team that ropes an ineligible division is disqualified after the fact and the
+money re-paid, which through an append-only ledger means a clawback. The check
+belongs at the entry desk.
+
+**Built instead:** `roper_classifications` (numbers per association, per end,
+with history rather than overwrite), `rodeo_events.division_config`,
+`division_templates`, and number columns on `entries` **snapshotted at entry
+time** so a mid-season raise cannot retroactively disqualify a team. Eligibility
+logic in the engine reports every violation at once rather than the first.
+
+Note that USTRC's barrier is **5 seconds**, not the 10 that PRCA assesses — the
+same event, a materially different rule.
+
+`supabase/migrations/0011_handicap_roping.sql`,
+`packages/engine/src/scoring/divisions.ts`
+
+---
+
+## D24 — A multi-round test asserted against the wrong rounding · S3
+
+Internal, not a shipped defect: the multi-round payout test compared the
+go-round pool against `Math.round(net * 0.4)` while the engine allocates by
+largest remainder. The two can legitimately differ by a cent, so the test would
+have failed on some purses for the right reason. It now asserts against the
+engine's own allocation and against the exact sum.
+
+`packages/engine/test/payouts.test.ts`
+
+---
+
 ## Carried forward unchanged
 
 These are noted in the architecture and remain open. They are **not** defects —
@@ -394,3 +470,7 @@ they are known gaps that block specific features.
 Every system scoring or payout template whose rulebook has not been obtained
 carries `"unverified": true` and a note in its config JSON. Do not run a
 sanctioned rodeo on an unverified template.
+
+What each rule is sourced from, and when it was last checked, is in
+[`RULES.md`](RULES.md). As of 8 August 2026 the PRCA, WPRA and PBR templates
+are sourced and dated; USTRC, WSTR and CPRA remain unverified.

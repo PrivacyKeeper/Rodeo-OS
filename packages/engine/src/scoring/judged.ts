@@ -181,12 +181,19 @@ export function calculateJudgedScore(
       0,
     );
 
-  const riderTotal = sumOf((n) => n === 'rider');
-  const animalTotal = sumOf((n) => n === 'animal' || n.includes('bull'));
-  const finalScore = judges.reduce(
-    (total, judge) => total + judge.components.reduce((s, c) => s + c.value, 0),
-    0,
-  );
+  // PBR's four judges each mark the rider 0-25 and the bull 0-25; the eight
+  // marks are "combined and then divided by two" to reach the 100-point score.
+  // PRCA's two judges sum straight to 100 and divide by one.
+  const divisor =
+    config.score_divisor && config.score_divisor > 0 ? config.score_divisor : 1;
+
+  const riderTotal = sumOf((n) => n === 'rider') / divisor;
+  const animalTotal = sumOf((n) => n === 'animal' || n.includes('bull')) / divisor;
+  const finalScore =
+    judges.reduce(
+      (total, judge) => total + judge.components.reduce((s, c) => s + c.value, 0),
+      0,
+    ) / divisor;
 
   // ---- Variance cap --------------------------------------------------------
   // §5.7 is explicit that this is a review flag, not a rejection: "Warning

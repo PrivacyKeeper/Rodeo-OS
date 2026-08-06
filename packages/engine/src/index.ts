@@ -32,6 +32,16 @@ export {
   calculateAggregate,
 } from './scoring/aggregate.ts';
 export type { DAssignment, RoundScore } from './scoring/aggregate.ts';
+export {
+  checkDivisionEligibility,
+  eligibleDivisions,
+} from './scoring/divisions.ts';
+export type {
+  DivisionConfig,
+  DivisionRule,
+  EligibilityResult,
+  TeamNumbers,
+} from './scoring/divisions.ts';
 
 export {
   calculateDayMoney,

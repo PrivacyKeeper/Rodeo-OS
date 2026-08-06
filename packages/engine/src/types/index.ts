@@ -69,6 +69,19 @@ export interface ScoringConfig {
   components?: ScoringComponent[];
   /** 0.5 (PRCA), 0.1 (PBR 2026). Absent means any value is accepted. */
   increment?: number;
+  /**
+   * Divide the summed judge marks by this to reach the official score.
+   *
+   * PRCA runs two judges who each mark the rider 0-25 and the animal 0-25;
+   * the four marks sum straight to 100, so the divisor is 1.
+   *
+   * PBR runs FOUR judges on the same 0-25 scales. Their eight marks sum to
+   * 200 and PBR's published rule is that they are "combined and then divided
+   * by two" — divisor 2. Without it a 90-point PBR ride records as 180.
+   *
+   * Defaults to 1. See docs/SPEC-DELTAS.md D21.
+   */
+  score_divisor?: number;
   /** Rider total may not exceed animal total by more than this. */
   variance_cap?: number;
   /**

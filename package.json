@@ -1,16 +1,16 @@
 {
   "name": "rodeo-os",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "RodeoApps.pro OS — the operating system for producing a rodeo.",
   "workspaces": ["packages/*", "apps/*"],
-  "engines": { "node": ">=22.18" },
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "typescript": "^6.0.2"
   }
 }

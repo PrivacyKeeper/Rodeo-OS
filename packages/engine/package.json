@@ -1,6 +1,6 @@
 {
   "name": "@rodeo-os/engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Scoring and payout engines. Pure calculation, no dependencies, no I/O.",
   "type": "module",
   "main": "./src/index.ts",

@@ -13,7 +13,7 @@ import {
   validatePayoutRule,
 } from '../src/payouts/engine.ts';
 import { applyWithholding } from '../src/payouts/withholding.ts';
-import { toCents } from '../src/money.ts';
+import { allocate, toCents } from '../src/money.ts';
 import type {
   Entryish,
   PayoutConfig,
@@ -421,10 +421,17 @@ describe('calculateMultiRoundPayout', () => {
       result.net_purse_cents,
     );
 
+    // Asserted against the engine's own largest-remainder allocation, not
+    // against Math.round: the two can legitimately differ by a cent, and it is
+    // the allocation that has to reconcile.
+    const [expectedGoRound, expectedAverage] = allocate(result.net_purse_cents, [
+      0.4, 0.6,
+    ]);
     const goRoundTotal = sumOf(result.payouts.filter((p) => p.type === 'go_round'));
     const averageTotal = sumOf(result.payouts.filter((p) => p.type === 'average'));
-    assert.equal(goRoundTotal, Math.round(result.net_purse_cents * 0.4));
-    assert.equal(averageTotal, Math.round(result.net_purse_cents * 0.6));
+    assert.equal(goRoundTotal, expectedGoRound);
+    assert.equal(averageTotal, expectedAverage);
+    assert.equal(goRoundTotal + averageTotal, result.net_purse_cents);
 
     assert.deepEqual(
       [...new Set(result.payouts.filter((p) => p.go_round).map((p) => p.go_round))].sort(),
