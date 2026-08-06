@@ -1,0 +1,12 @@
+{
+  "name": "@rodeo-os/engine",
+  "version": "0.1.0",
+  "description": "Scoring and payout engines. Pure calculation, no dependencies, no I/O.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  }
+}

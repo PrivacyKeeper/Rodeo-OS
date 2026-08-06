@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    name: Scoring and payout engines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # The engine package has no runtime dependencies on purpose: the code
+      # that decides who gets paid what runs without an install step.
+      - name: Run engine tests
+        working-directory: packages/engine
+        run: node --test "test/*.test.ts"
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run typecheck
+
+  migrations:
+    name: Migrations apply cleanly
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply every migration in order
+        env:
+          PGPASSWORD: postgres
+        run: |
+          # auth.uid() is a Supabase builtin; stub it so plain Postgres can
+          # parse the RLS policies.
+          psql -h localhost -U postgres -c "create schema if not exists auth;"
+          psql -h localhost -U postgres -c \
+            "create or replace function auth.uid() returns uuid language sql stable as \$\$ select null::uuid \$\$;"
+          for f in supabase/migrations/*.sql; do
+            echo "--- $f"
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Schema invariants hold
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+            -f supabase/tests/invariants.sql 2>&1 | tee /tmp/inv.log
+          if grep -q FAIL /tmp/inv.log; then exit 1; fi
+          echo "all invariants passed"
