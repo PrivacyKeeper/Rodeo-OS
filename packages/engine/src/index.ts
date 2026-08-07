@@ -62,6 +62,16 @@ export type {
   MultiRoundInput,
 } from './payouts/engine.ts';
 
+export { computeResults, expandTeamResults } from './results/engine.ts';
+export type {
+  ComputeResultsInput,
+  ComputeResultsOutput,
+  ComputedResult,
+  PointsConfig,
+  ResultType,
+  ScoreRow,
+} from './results/engine.ts';
+
 export {
   checkEntryEligibility,
   classifyTurnout,

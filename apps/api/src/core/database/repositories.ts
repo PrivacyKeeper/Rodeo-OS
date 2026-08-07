@@ -643,17 +643,17 @@ export async function changesSince(
 // ===========================================================================
 
 export async function loadPublicResults(tx: Tx, rodeoId: string): Promise<unknown> {
-  const [rodeo] = await tx<
-    { id: string; name: string; start_date: string; end_date: string; status: string }[]
-  >`
-    select id, name, start_date, end_date, status
-      from rodeos
-     where id = ${rodeoId}
-  `;
-  if (!rodeo) return null;
-
+  // Reads the public_results view, not `results` joined to `users`. A public
+  // scoreboard needs a name; it must not be able to reach a contestant's
+  // email, phone, date of birth, address or tax identifiers. The view is the
+  // single place a name crosses that boundary. See migration 0016 / D31.
   const rows = await tx<
     {
+      rodeo_name: string;
+      start_date: string;
+      end_date: string;
+      venue_city: string | null;
+      venue_state: string | null;
       event_type: string;
       result_type: string;
       go_round: number | null;
@@ -665,15 +665,15 @@ export async function loadPublicResults(tx: Tx, rodeoId: string): Promise<unknow
       payout_amount: string;
     }[]
   >`
-    select e.event_type, r.result_type, r.go_round, r.d_division, r.place,
-           u.first_name, u.last_name, r.aggregate_score, r.payout_amount
-      from results r
-      join rodeo_events e on e.id = r.rodeo_event_id
-      join users u on u.id = r.contestant_id
-     where r.rodeo_id = ${rodeoId}
-       and r.is_official
-     order by e.sort_order, e.event_type, r.result_type, r.go_round, r.place
+    select rodeo_name, start_date, end_date, venue_city, venue_state,
+           event_type, result_type, go_round, d_division, place,
+           first_name, last_name, aggregate_score, payout_amount
+      from public_results
+     where rodeo_id = ${rodeoId}
+     order by event_sort_order, event_type, result_type, go_round, place
   `;
+
+  if (rows.length === 0) return null;
 
   type Placing = (typeof rows)[number];
   const byEvent = new Map<string, Placing[]>();
@@ -683,8 +683,16 @@ export async function loadPublicResults(tx: Tx, rodeoId: string): Promise<unknow
     byEvent.set(row.event_type, bucket);
   }
 
+  const first = rows[0];
   return {
-    rodeo,
+    rodeo: {
+      id: rodeoId,
+      name: first.rodeo_name,
+      start_date: first.start_date,
+      end_date: first.end_date,
+      venue_city: first.venue_city,
+      venue_state: first.venue_state,
+    },
     events: [...byEvent.entries()].map(([event_type, placings]) => ({
       event_type,
       placings: placings.map((p) => ({
@@ -706,6 +714,9 @@ export async function loadStandings(
   season: string,
   eventType: string,
 ): Promise<unknown> {
+  // Same boundary as loadPublicResults: aggregated over public_standings, so
+  // there is exactly one surface where a contestant name leaves the private
+  // tables.
   const rows = await tx<
     {
       contestant_id: string;
@@ -716,21 +727,12 @@ export async function loadStandings(
       rodeos_entered: string;
     }[]
   >`
-    select r.contestant_id, u.first_name, u.last_name,
-           sum(r.points_earned) as total_points,
-           sum(r.payout_amount) as total_earnings,
-           count(distinct r.rodeo_id) as rodeos_entered
-      from results r
-      join rodeo_events e on e.id = r.rodeo_event_id
-      join rodeos ro on ro.id = r.rodeo_id
-      join users u on u.id = r.contestant_id
-      join rodeo_sanctioning s on s.rodeo_id = ro.id
-     where s.sanctioning_body = ${body}
-       and s.approval_status = 'approved'
-       and e.event_type = ${eventType}
-       and extract(year from ro.start_date)::text = ${season}
-       and r.is_official
-     group by r.contestant_id, u.first_name, u.last_name
+    select contestant_id, first_name, last_name,
+           total_points, total_earnings, rodeos_entered
+      from public_standings
+     where sanctioning_body = ${body}
+       and season = ${season}
+       and event_type = ${eventType}
      order by total_points desc, total_earnings desc
      limit 200
   `;

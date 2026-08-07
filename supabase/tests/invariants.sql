@@ -229,4 +229,64 @@ do $$ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------- public PII
+-- A public scoreboard needs a NAME. It must never be a route to a contestant's
+-- contact details, date of birth, address or tax identifiers.
+
+insert into results (org_id, rodeo_id, rodeo_event_id, contestant_id,
+                     result_type, place, is_official)
+values ('11111111-1111-4111-8111-111111111111',
+        'aaaaaaaa-1111-4111-8111-111111111111',
+        'bbbbbbbb-1111-4111-8111-111111111111',
+        'cccccccc-1111-4111-8111-111111111111', 'go_round', 1, true);
+
+update users
+   set email = 'private@example.com', phone = '555-0100',
+       date_of_birth = '1990-01-01', address_line1 = '1 Private Road',
+       tax_id_last4 = '6789'
+ where id = 'cccccccc-1111-4111-8111-111111111111';
+
+update rodeos set status = 'in_progress'
+ where id = 'aaaaaaaa-1111-4111-8111-111111111111';
+
+do $$
+declare n int;
+begin
+    set local role anon;
+
+    select count(*) into n from public_results
+     where contestant_id = 'cccccccc-1111-4111-8111-111111111111';
+    if n = 0 then
+        raise exception 'FAIL public: the scoreboard is empty; a name cannot be resolved';
+    end if;
+    raise notice 'PASS public: an official placing is readable anonymously, with a name';
+
+    select count(*) into n from users;
+    if n > 0 then
+        raise exception 'FAIL public: anonymous callers can read the users table';
+    end if;
+    raise notice 'PASS public: the users table itself stays closed to anonymous callers';
+
+    reset role;
+end $$;
+
+-- The view must not carry a column that could leak contact or tax data, even
+-- if somebody later adds one to `users`.
+do $$
+declare leaked text;
+begin
+    select string_agg(column_name, ', ') into leaked
+      from information_schema.columns
+     where table_name = 'public_results'
+       and column_name in ('email', 'phone', 'date_of_birth', 'address_line1',
+                           'address_line2', 'postal_code', 'tax_id_last4',
+                           'tax_id_type', 'stripe_customer_id',
+                           'stripe_account_id', 'supabase_auth_id',
+                           'memberships');
+    if leaked is not null then
+        raise exception 'FAIL public: public_results exposes %', leaked;
+    end if;
+    raise notice 'PASS public: the scoreboard view carries no contact or tax columns';
+end $$;
+
 rollback;

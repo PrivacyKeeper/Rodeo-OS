@@ -574,6 +574,79 @@ privileges, and releases when the transaction ends either way.
 
 ---
 
+## D29 — Nothing wrote the `results` table · S1
+
+Three call sites read `results`. Zero wrote it.
+
+`loadPayoutContext()` reads it for `average_results`, `loadPublicResults()`
+reads it for the scoreboard, `loadStandings()` reads it for the season. All
+three got an empty table, which means: **the average payout paid nobody**, the
+public results page was blank, and standings returned nothing.
+
+The multi-round payout tests passed throughout, because they fed the engine
+results directly. Nothing exercised the path from a stored score to a stored
+placing — the join between two correct halves.
+
+**Built instead:** `computeResults()` derives go-round placings, the average
+and D-divisions from the scores, with season points on either a money basis
+(the PRCA convention of a dollar being a point) or an association placing
+table. `writeResults()` replaces an event's results rather than upserting,
+because a correction can REMOVE a placing — a contestant disqualified drops out
+of the average entirely, and an upsert would leave the stale row behind.
+Results are derived data, so rebuilding is always safe; the ledger is
+append-only precisely because it is not.
+
+A team places once but the standings track individuals, so `expandTeamResults()`
+fans a team placing out to both ends before writing.
+
+`packages/engine/src/results/engine.ts`,
+`apps/api/src/modules/results/routes.ts`, test `the average payout paid NOBODY before results were written`
+
+---
+
+## D30 — Results were less public than the scores behind them · S2
+
+`scores_public_read` exposes an official score once the rodeo is
+`in_progress` — that is the live results page. `results_public_read` required
+`completed` or later.
+
+So during a rodeo a spectator could see every raw time and none of the placings
+computed from them. The leaderboard was hidden while the numbers behind it were
+on the screen, and at a multi-day rodeo that means no live average and no
+standings until it is all over.
+
+**Built instead:** the results policy now matches the scores policy.
+`is_official` still gates provisional placings out, and nothing is disclosed
+that the scores did not already disclose.
+
+`supabase/migrations/0015_live_results_visibility.sql`
+
+---
+
+## D31 — The public scoreboard could not name anybody · S1
+
+`loadPublicResults()` joined `users` to put a name next to a placing.
+Anonymous callers have no policy on `users`, so the join matched nothing and
+**every public results page returned empty** — across all nine .pro sites,
+which is also the entire SEO surface.
+
+The tempting fix is a public read policy on `users`, and it is dangerous. RLS
+is ROW level, not column level: opening the row to satisfy a name lookup also
+opens email, phone, date of birth, home address and `tax_id_last4` to anonymous
+callers. A scoreboard needs a name, not a contestant's file.
+
+**Built instead:** a `public_results` view exposing exactly two columns from
+`users` — first and last name — and only for official placings at a rodeo
+already under way, with `public_standings` aggregated over the same surface so
+there is one auditable place where a name leaves the private tables. Three
+invariants now hold the line: the scoreboard resolves a name anonymously, the
+`users` table stays closed anonymously, and the view carries no contact or tax
+column even if one is later added to `users`.
+
+`supabase/migrations/0016_public_results_view.sql`
+
+---
+
 ## Carried forward unchanged
 
 These are noted in the architecture and remain open. They are **not** defects —

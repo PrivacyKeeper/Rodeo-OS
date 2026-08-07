@@ -34,6 +34,12 @@ import {
   settleTransaction,
 } from '../src/core/settlement.ts';
 import {
+  loadEventForResults,
+  loadScoresForResults,
+  writeResults,
+} from '../src/core/database/entries-repo.ts';
+import { computeResults, expandTeamResults } from '@rodeo-os/engine';
+import {
   changesSince,
   createOption,
   disburse,
@@ -739,6 +745,209 @@ describe('persistence', { skip: url ? false : 'TEST_DATABASE_URL not set' }, () 
         result.payouts.every((p) => p.contestant_id !== trEntry1),
         'no line is addressed to an entry id instead of a person',
       );
+    });
+  });
+
+  // =========================================================================
+  // Results — the step that was missing entirely
+  // =========================================================================
+
+  describe('results writer', () => {
+    const twoRoundEvent = randomUUID();
+    const tr1 = randomUUID();
+    const tr2 = randomUUID();
+    const tr3 = randomUUID();
+    const r1 = randomUUID();
+    const r2 = randomUUID();
+    const r3 = randomUUID();
+
+    before(async () => {
+      await db.asService('fixture: two-round event', async (tx) => {
+        await tx`
+          insert into users (id, first_name, last_name) values
+            (${r1}, 'Round', 'One'), (${r2}, 'Round', 'Two'), (${r3}, 'Round', 'Three')
+        `;
+        await tx`
+          insert into rodeo_events (id, org_id, rodeo_id, event_type, scoring_mode,
+                                    entry_fee, added_money, num_go_rounds,
+                                    scoring_config_id, payout_config_id)
+          values (${twoRoundEvent}, ${orgA}, ${rodeoA}, 'tie_down_roping', 'timed',
+                  100.00, 0, 2, ${scoringConfigId}, ${payoutConfigId})
+        `;
+        await tx`
+          insert into entries (id, org_id, rodeo_id, rodeo_event_id, contestant_id, status)
+          values
+            (${tr1}, ${orgA}, ${rodeoA}, ${twoRoundEvent}, ${r1}, 'confirmed'),
+            (${tr2}, ${orgA}, ${rodeoA}, ${twoRoundEvent}, ${r2}, 'confirmed'),
+            (${tr3}, ${orgA}, ${rodeoA}, ${twoRoundEvent}, ${r3}, 'confirmed')
+        `;
+        // r1 catches both. r2 catches both, slower. r3 misses round 2.
+        await tx`
+          insert into scores (org_id, rodeo_id, rodeo_event_id, entry_id,
+                              contestant_id, go_round, final_time, status, source)
+          values
+            (${orgA}, ${rodeoA}, ${twoRoundEvent}, ${tr1}, ${r1}, 1, 9.10, 'official', 'manual'),
+            (${orgA}, ${rodeoA}, ${twoRoundEvent}, ${tr2}, ${r2}, 1, 8.70, 'official', 'manual'),
+            (${orgA}, ${rodeoA}, ${twoRoundEvent}, ${tr3}, ${r3}, 1, 10.40, 'official', 'manual'),
+            (${orgA}, ${rodeoA}, ${twoRoundEvent}, ${tr1}, ${r1}, 2, 8.20, 'official', 'manual'),
+            (${orgA}, ${rodeoA}, ${twoRoundEvent}, ${tr2}, ${r2}, 2, 9.90, 'official', 'manual'),
+            (${orgA}, ${rodeoA}, ${twoRoundEvent}, ${tr3}, ${r3}, 2, null, 'no_time', 'manual')
+        `;
+      });
+    });
+
+    // Regression for SPEC-DELTAS D29. Before the writer existed, results was
+    // read by three call sites and written by none.
+    it('the average payout paid NOBODY before results were written', async () => {
+      const ctx = await db.asUser(secretaryA(), (tx) =>
+        loadPayoutContext(tx, orgA, twoRoundEvent),
+      );
+      assert.equal(
+        ctx!.average_results.length,
+        0,
+        'this is the bug: no results rows, so no average field',
+      );
+    });
+
+    it('computes and writes go-round placings and the average', async () => {
+      const written = await db.asUser(secretaryA(), async (tx) => {
+        const event = await loadEventForResults(tx, orgA, twoRoundEvent);
+        const scores = await loadScoresForResults(tx, orgA, twoRoundEvent, false);
+        const computed = computeResults({
+          scores: scores.map((sc) => ({
+            contestant_id: sc.contestant_id,
+            go_round: sc.go_round,
+            status: sc.status,
+            final_score: sc.final_score,
+            final_time: sc.final_time,
+          })),
+          scoring_config: { mode: 'timed', time_precision: 2 },
+          num_go_rounds: event!.num_go_rounds,
+        });
+        return writeResults(tx, {
+          org_id: orgA,
+          rodeo_id: rodeoA,
+          rodeo_event_id: twoRoundEvent,
+          results: expandTeamResults(computed.results).map((r) => ({
+            contestant_id: r.contestant_id,
+            result_type: r.result_type,
+            go_round: r.go_round,
+            d_division: r.d_division,
+            aggregate_score: r.aggregate_score,
+            place: r.place,
+            tied_with: r.tied_with,
+            points_earned: r.points_earned,
+          })),
+          official: true,
+        });
+      });
+
+      // 3 in round 1, 2 in round 2 (one no-time), 2 in the average.
+      assert.equal(written, 7);
+
+      const rows = await db.asUser(secretaryA(), (tx) =>
+        tx<{ result_type: string; contestant_id: string; place: number; aggregate_score: string }[]>`
+          select result_type, contestant_id, place, aggregate_score
+            from results where rodeo_event_id = ${twoRoundEvent}
+           order by result_type, place
+        `,
+      );
+
+      const avg = rows.filter((r) => r.result_type === 'average');
+      assert.equal(avg.length, 2, 'only the two who caught both head');
+      assert.equal(avg[0].contestant_id, r1, '17.30 beats 18.60');
+      assert.equal(Number(avg[0].aggregate_score), 17.3);
+      assert.ok(!avg.some((r) => r.contestant_id === r3), 'the no-time is out');
+    });
+
+    it('and NOW the average payout has a field to pay', async () => {
+      const ctx = await db.asUser(secretaryA(), (tx) =>
+        loadPayoutContext(tx, orgA, twoRoundEvent),
+      );
+      assert.equal(ctx!.average_results.length, 2, 'the hole is closed');
+
+      const result = calculatePayout({
+        payout_config: ctx!.config,
+        scoring_mode: ctx!.scoring_mode,
+        entries: ctx!.entries,
+        added_money_cents: ctx!.added_money_cents,
+        entry_fee_cents: ctx!.entry_fee_cents,
+        results: ctx!.average_results,
+      });
+      assert.equal(result.ok, true);
+      assert.ok(result.payouts.length > 0, 'somebody actually gets paid');
+      assert.equal(
+        result.payouts.reduce((s, p) => s + p.amount_cents, 0) +
+          result.unpaid_cents,
+        result.net_purse_cents,
+      );
+    });
+
+    it('re-finalising after a correction replaces the placings', async () => {
+      // The judge reverses the round-2 no-time: r3 actually caught.
+      await db.asService('fixture: score correction', async (tx) => {
+        await tx`
+          update scores set final_time = 8.00, status = 'official',
+                            last_edited_by = ${userA}
+           where rodeo_event_id = ${twoRoundEvent} and contestant_id = ${r3}
+             and go_round = 2
+        `;
+      });
+
+      await db.asUser(secretaryA(), async (tx) => {
+        const scores = await loadScoresForResults(tx, orgA, twoRoundEvent, false);
+        const computed = computeResults({
+          scores: scores.map((sc) => ({
+            contestant_id: sc.contestant_id,
+            go_round: sc.go_round,
+            status: sc.status,
+            final_score: sc.final_score,
+            final_time: sc.final_time,
+          })),
+          scoring_config: { mode: 'timed', time_precision: 2 },
+          num_go_rounds: 2,
+        });
+        return writeResults(tx, {
+          org_id: orgA,
+          rodeo_id: rodeoA,
+          rodeo_event_id: twoRoundEvent,
+          results: computed.results.map((r) => ({
+            contestant_id: r.contestant_id,
+            result_type: r.result_type,
+            go_round: r.go_round,
+            d_division: r.d_division,
+            aggregate_score: r.aggregate_score,
+            place: r.place,
+            tied_with: r.tied_with,
+            points_earned: r.points_earned,
+          })),
+          official: true,
+        });
+      });
+
+      const avg = await db.asUser(secretaryA(), (tx) =>
+        tx<{ contestant_id: string; place: number }[]>`
+          select contestant_id, place from results
+           where rodeo_event_id = ${twoRoundEvent} and result_type = 'average'
+           order by place
+        `,
+      );
+      assert.equal(avg.length, 3, 'all three now have an average');
+      assert.ok(
+        avg.some((a) => a.contestant_id === r3),
+        'the corrected run put them back in',
+      );
+      // No stale duplicate from the first finalise.
+      assert.equal(new Set(avg.map((a) => a.contestant_id)).size, 3);
+    });
+
+    it('the public results page now returns something', async () => {
+      const out = (await db.asAnon((tx) => loadPublicResults(tx, rodeoA))) as {
+        events: { event_type: string; placings: unknown[] }[];
+      };
+      const tieDown = out.events.find((e) => e.event_type === 'tie_down_roping');
+      assert.ok(tieDown, 'the event appears');
+      assert.ok(tieDown!.placings.length > 0, 'with placings on it');
     });
   });
 

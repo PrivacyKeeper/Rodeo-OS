@@ -369,3 +369,177 @@ export async function recordRedraw(
   `;
   return row.id;
 }
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+
+export interface ScoreForResults {
+  contestant_id: string;
+  entry_id: string;
+  team_members: string[] | null;
+  go_round: number;
+  status: string;
+  final_score: number | null;
+  final_time: number | null;
+}
+
+/**
+ * Every official run in an event, with team membership resolved.
+ *
+ * A team event is keyed on the ENTRY, because a team places once and the same
+ * header can be on three teams in the same roping.
+ */
+export async function loadScoresForResults(
+  tx: Tx,
+  orgId: string,
+  eventId: string,
+  isTeamEvent: boolean,
+): Promise<ScoreForResults[]> {
+  const rows = await tx<
+    {
+      contestant_id: string;
+      entry_id: string;
+      partner_id: string | null;
+      go_round: number;
+      status: string;
+      final_score: string | null;
+      final_time: string | null;
+    }[]
+  >`
+    select s.contestant_id, s.entry_id, e.partner_id, s.go_round, s.status,
+           s.final_score, s.final_time
+      from scores s
+      join entries e on e.id = s.entry_id
+     where s.rodeo_event_id = ${eventId}
+       and s.org_id = ${orgId}
+       and s.status in ('official', 'no_time', 'dq')
+     order by s.go_round, s.id
+  `;
+
+  return rows.map((r) => ({
+    contestant_id: isTeamEvent ? r.entry_id : r.contestant_id,
+    entry_id: r.entry_id,
+    team_members: isTeamEvent
+      ? r.partner_id
+        ? [r.contestant_id, r.partner_id]
+        : [r.contestant_id]
+      : null,
+    go_round: r.go_round,
+    status: r.status,
+    final_score: r.final_score === null ? null : Number(r.final_score),
+    final_time: r.final_time === null ? null : Number(r.final_time),
+  }));
+}
+
+export interface ResultRow {
+  contestant_id: string;
+  result_type: string;
+  go_round: number | null;
+  d_division: number | null;
+  aggregate_score: number | null;
+  place: number;
+  tied_with: string[];
+  points_earned: number;
+}
+
+/**
+ * Replace an event's results.
+ *
+ * Delete-then-insert inside one transaction rather than upsert: a correction
+ * can REMOVE a placing (somebody disqualified drops out of the average
+ * entirely), and an upsert would leave the stale row behind. `results` is
+ * derived data, so rebuilding it is always safe — unlike the ledger, which is
+ * append-only precisely because it is not derived.
+ */
+export async function writeResults(
+  tx: Tx,
+  input: {
+    org_id: string;
+    rodeo_id: string;
+    rodeo_event_id: string;
+    results: ResultRow[];
+    official: boolean;
+  },
+): Promise<number> {
+  await tx`
+    delete from results
+     where rodeo_event_id = ${input.rodeo_event_id}
+       and org_id = ${input.org_id}
+  `;
+
+  for (const r of input.results) {
+    await tx`
+      insert into results (
+        org_id, rodeo_id, rodeo_event_id, contestant_id, result_type,
+        go_round, d_division, aggregate_score, place, tied_with,
+        points_earned, is_official
+      ) values (
+        ${input.org_id}, ${input.rodeo_id}, ${input.rodeo_event_id},
+        ${r.contestant_id}, ${r.result_type},
+        ${r.go_round}, ${r.d_division}, ${r.aggregate_score}, ${r.place},
+        ${r.tied_with}, ${r.points_earned}, ${input.official}
+      )
+    `;
+  }
+
+  return input.results.length;
+}
+
+/** Money already credited per contestant, for money-based season points. */
+export async function loadEarnings(
+  tx: Tx,
+  orgId: string,
+  eventId: string,
+): Promise<Map<string, number>> {
+  const rows = await tx<{ to_user_id: string; total: string }[]>`
+    select to_user_id, sum(amount) as total
+      from financial_transactions
+     where org_id = ${orgId}
+       and rodeo_event_id = ${eventId}
+       and transaction_type like 'payout_%'
+       and to_user_id is not null
+     group by to_user_id
+  `;
+  return new Map(
+    rows.map((r) => [r.to_user_id, Math.round(Number(r.total) * 100)]),
+  );
+}
+
+export interface EventForResults {
+  rodeo_id: string;
+  scoring_mode: 'judged' | 'timed';
+  num_go_rounds: number;
+  is_d_format: boolean;
+  d_format_config: unknown | null;
+  scoring_config: unknown | null;
+  payout_config: unknown | null;
+}
+
+export async function loadEventForResults(
+  tx: Tx,
+  orgId: string,
+  eventId: string,
+): Promise<EventForResults | null> {
+  const [row] = await tx<
+    {
+      rodeo_id: string;
+      scoring_mode: 'judged' | 'timed';
+      num_go_rounds: number;
+      is_d_format: boolean;
+      d_format_config: unknown | null;
+      scoring_config: unknown | null;
+      payout_config: unknown | null;
+    }[]
+  >`
+    select e.rodeo_id, e.scoring_mode, e.num_go_rounds, e.is_d_format,
+           e.d_format_config,
+           sc.config as scoring_config,
+           pc.config as payout_config
+      from rodeo_events e
+      left join scoring_configs sc on sc.id = e.scoring_config_id
+      left join payout_configs pc on pc.id = e.payout_config_id
+     where e.id = ${eventId} and e.org_id = ${orgId}
+  `;
+  return row ?? null;
+}

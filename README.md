@@ -8,7 +8,7 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Twenty-eight defects are recorded; several
+before assuming the code is wrong.** Thirty-one defects are recorded; several
 of them lose money or leak data.
 
 Rules were last reviewed against published sources on **8 August 2026** —
@@ -28,8 +28,8 @@ jackpot — with what passed, what broke, and what is still missing.
 ## What is here
 
 ```
-supabase/migrations/     Full schema: 29 tables, RLS, immutability triggers,
-                         287 seeded options, scoring/payout/division templates
+supabase/migrations/     Full schema: 29 tables + 2 public views, RLS,
+                         immutability triggers, 287 seeded options, templates
 supabase/tests/          Schema invariants, run in CI
 packages/engine/         Scoring and payout engines. Zero dependencies,
                          no I/O, 208 tests including real-rodeo scenarios
@@ -158,7 +158,8 @@ triggers bind the service role too. Full reasoning in
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |
 | Stripe Connect | Not started — card rows sit `pending` until a processor confirms |
-| Results writer | Not started — `results` is read but nothing populates it |
+| Results & standings | Complete — placings, average, D-divisions, season points |
+| Public scoreboard | Complete — name-only view, no PII reachable anonymously |
 | Web app (PWA) | Not started |
 | Timer Bridge | Not started |
 

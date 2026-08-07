@@ -60,6 +60,8 @@ jobs:
             echo "--- $f"
             psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"
           done
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
+            -c "grant select on public_results, public_standings to anon, authenticated;"
 
       - name: Schema invariants hold
         env:
@@ -107,6 +109,8 @@ jobs:
           # Re-run for grants on the tables the migrations just created.
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
             -f supabase/local/bootstrap.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
+            -c "grant select on public_results, public_standings to anon, authenticated;"
 
       - name: Integration tests
         working-directory: apps/api
