@@ -62,6 +62,27 @@ export type {
   MultiRoundInput,
 } from './payouts/engine.ts';
 
+export {
+  COMPETITORS,
+  DEFAULT_PLATFORM_FEES,
+  RODEOAPPS_SUBSCRIPTION,
+  STRIPE_STANDARD,
+  calculatePlatformFee,
+  compareAllIn,
+  modelContestant,
+  subscriptionBreakEven,
+} from './pricing/engine.ts';
+export type {
+  AnnualRevenue,
+  CompetitorRate,
+  ContestantProfile,
+  PlatformFeeConfig,
+  PlatformFeeInput,
+  PlatformFeeResult,
+  ProcessorRates,
+  SubscriptionPricing,
+} from './pricing/engine.ts';
+
 export { computeResults, expandTeamResults } from './results/engine.ts';
 export type {
   ComputeResultsInput,

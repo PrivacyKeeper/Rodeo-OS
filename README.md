@@ -19,6 +19,11 @@ The product model — Procore for construction, Toast for restaurants, applied
 to rodeo — and what it demanded of the schema is in
 [`docs/MODEL.md`](docs/MODEL.md).
 
+[`docs/PRICING.md`](docs/PRICING.md) sets out the business model — free to
+the producer, 2% to the contestant, zero for subscribers — with the competitor
+rates it was set against. The numbers are computed by the engine, not typed
+into a table.
+
 **[`docs/AUDIT.md`](docs/AUDIT.md) walks four real rodeos end to end** — the
 NFR in Las Vegas, Cheyenne Frontier Days, a local Texas rodeo and an Oklahoma
 jackpot — with what passed, what broke, and what is still missing.
@@ -157,6 +162,7 @@ triggers bind the service role too. Full reasoning in
 | Entries | Complete — fee quoting, eligibility, turnouts, refunds |
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |
+| Pricing model | Complete and tested — platform fee, subscriber waiver, revenue model |
 | Stripe Connect | Not started — card rows sit `pending` until a processor confirms |
 | Results & standings | Complete — placings, average, D-divisions, season points |
 | Public scoreboard | Complete — name-only view, no PII reachable anonymously |
