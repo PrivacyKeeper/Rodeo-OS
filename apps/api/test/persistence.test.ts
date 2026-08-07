@@ -630,6 +630,112 @@ describe('persistence', { skip: url ? false : 'TEST_DATABASE_URL not set' }, () 
   });
 
   // =========================================================================
+  // Team roping, end to end through the database
+  // =========================================================================
+
+  describe('team roping through the database', () => {
+    const trEvent = randomUUID();
+    const trConfig = randomUUID();
+    const header1 = randomUUID();
+    const heeler1 = randomUUID();
+    const header2 = randomUUID();
+    const heeler2 = randomUUID();
+    const trEntry1 = randomUUID();
+    const trEntry2 = randomUUID();
+
+    before(async () => {
+      await db.asService('fixture: team roping event', async (tx) => {
+        await tx`
+          insert into users (id, first_name, last_name) values
+            (${header1}, 'Head', 'One'),
+            (${heeler1}, 'Heel', 'One'),
+            (${header2}, 'Head', 'Two'),
+            (${heeler2}, 'Heel', 'Two')
+        `;
+        await tx`
+          insert into payout_configs (id, org_id, name, is_system, config)
+          values (${trConfig}, ${orgA}, 'TR Winner Take All', false, ${tx.json({
+            fee_structure: {},
+            team_payout: 'full_to_each',
+            team_size: 2,
+            payout_rules: [
+              { min_entries: 1, max_entries: 99, places_paid: 1, splits: [1.0] },
+            ],
+            ground_money_rule: 'combine_and_split',
+          })})
+        `;
+        await tx`
+          insert into rodeo_events (id, org_id, rodeo_id, event_type, scoring_mode,
+                                    entry_fee, added_money, payout_config_id)
+          values (${trEvent}, ${orgA}, ${rodeoA}, 'team_roping_header', 'timed',
+                  50.00, 0, ${trConfig})
+        `;
+        // One entry per TEAM, with the heeler as the partner.
+        await tx`
+          insert into entries (id, org_id, rodeo_id, rodeo_event_id,
+                               contestant_id, partner_id, status) values
+            (${trEntry1}, ${orgA}, ${rodeoA}, ${trEvent}, ${header1}, ${heeler1}, 'confirmed'),
+            (${trEntry2}, ${orgA}, ${rodeoA}, ${trEvent}, ${header2}, ${heeler2}, 'confirmed')
+        `;
+        await tx`
+          insert into scores (org_id, rodeo_id, rodeo_event_id, entry_id,
+                              contestant_id, final_time, status, source) values
+            (${orgA}, ${rodeoA}, ${trEvent}, ${trEntry1}, ${header1}, 6.42, 'official', 'manual'),
+            (${orgA}, ${rodeoA}, ${trEvent}, ${trEntry2}, ${header2}, 7.11, 'official', 'manual')
+        `;
+      });
+    });
+
+    it('loads both ropers on each team from partner_id', async () => {
+      const ctx = await db.asUser(secretaryA(), (tx) =>
+        loadPayoutContext(tx, orgA, trEvent),
+      );
+      assert.ok(ctx);
+      assert.equal(ctx!.results.length, 2, 'two teams');
+      for (const r of ctx!.results) {
+        assert.equal(r.team_members?.length, 2, 'header and heeler both present');
+      }
+    });
+
+    it('pays the header AND the heeler, and does not double the purse', async () => {
+      const ctx = await db.asUser(secretaryA(), (tx) =>
+        loadPayoutContext(tx, orgA, trEvent),
+      );
+      const result = calculatePayout({
+        payout_config: ctx!.config,
+        scoring_mode: ctx!.scoring_mode,
+        entries: ctx!.entries,
+        added_money_cents: ctx!.added_money_cents,
+        entry_fee_cents: ctx!.entry_fee_cents,
+        results: ctx!.results,
+      });
+
+      assert.equal(result.ok, true, JSON.stringify(result.issues));
+
+      const paid = result.payouts.reduce((s, p) => s + p.amount_cents, 0);
+      assert.equal(
+        paid + result.unpaid_cents + result.escrow_cents,
+        result.net_purse_cents,
+        'the purse goes out exactly once',
+      );
+
+      const winners = result.payouts.filter((p) => p.amount_cents > 0);
+      assert.equal(winners.length, 2, 'the winning header and heeler');
+      const ids = winners.map((w) => w.contestant_id).sort();
+      assert.deepEqual(ids, [header1, heeler1].sort());
+      assert.equal(
+        winners[0].amount_cents,
+        winners[1].amount_cents,
+        'a-Man: both ends credited the same',
+      );
+      assert.ok(
+        result.payouts.every((p) => p.contestant_id !== trEntry1),
+        'no line is addressed to an entry id instead of a person',
+      );
+    });
+  });
+
+  // =========================================================================
   // Sync and public reads
   // =========================================================================
 

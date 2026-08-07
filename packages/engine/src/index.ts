@@ -53,6 +53,7 @@ export {
   calculateStockContractorPay,
   findPayoutRule,
   payOnePurse,
+  payTeamPurse,
   validatePayoutRule,
 } from './payouts/engine.ts';
 export type {

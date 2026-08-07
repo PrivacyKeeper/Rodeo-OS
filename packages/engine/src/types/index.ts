@@ -183,10 +183,21 @@ export type ScoreResult = JudgedScoreResult | TimedScoreResult;
 
 /** The minimum a record needs for the ranker to place it. */
 export interface Rankable {
+  /**
+   * Who or what is being ranked. For an individual event this is the
+   * contestant. For a team event it is the TEAM's identifier — a team places
+   * once, however many people are on it.
+   */
   contestant_id: string;
   status: ScoreStatus;
   final_score?: number | null;
   final_time?: number | null;
+  /**
+   * The people on the team, in end order (team roping: header then heeler).
+   * Absent for individual events. Present, this is who actually gets paid —
+   * see PayoutConfig.team_payout.
+   */
+  team_members?: string[];
 }
 
 export interface RankedResult<T extends Rankable = Rankable> {
@@ -261,6 +272,25 @@ export interface PayoutConfig {
 
   is_d_format?: boolean;
   d_format?: DFormatConfig;
+
+  /**
+   * How a team event's place money reaches the people on the team.
+   *
+   * 'full_to_each' — TEAM ROPING. Both ropers pay an entry fee, so the purse
+   *   is built from two fees per team, and each end is credited the FULL place
+   *   amount. PRCA reports these as "$X-a-Man" and headers and heelers carry
+   *   separate world standings. Implemented by splitting the purse into one
+   *   equal pool per end and paying the same ranking out of each, so the total
+   *   disbursed still equals the purse exactly.
+   *
+   * 'split_between' — RANCH RODEO and similar. The team enters once, and the
+   *   team's place money is divided among its members.
+   *
+   * Absent means an individual event.
+   */
+  team_payout?: 'full_to_each' | 'split_between';
+  /** Ends on a team. 2 for team roping; 3–5 for ranch rodeo events. */
+  team_size?: number;
 
   tie_resolution?: TieResolution;
 

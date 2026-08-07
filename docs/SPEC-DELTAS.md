@@ -506,6 +506,47 @@ not show. It is the reason the integration suite exists.
 
 ---
 
+## D27 — Team events had no model; team roping paid half the team · S1
+
+Not in the architecture, and not in this repository until an NFR walkthrough
+went looking for it. §2.2.5 gives `entries.partner_id` and §2.2.4 lists
+`team_roping_header` and `team_roping_heeler` as event types, but nothing
+downstream ever reads either. The scoring engine ranks by `contestant_id`, the
+payout engine pays by `contestant_id`, and `loadPayoutContext` selected from
+`scores` without joining `entries` — so a team roping payout named the header
+and the heeler simply did not exist.
+
+Team roping is at the NFR, at every jackpot in the country, and is one of the
+nine discipline apps this platform is built around.
+
+Fixing the *amount* was the harder half. Both obvious answers are wrong:
+
+- Pay the team its place money and give each roper that amount → **twice the
+  purse leaves the account.**
+- Halve it → every roper is credited half what PRCA publishes, and the world
+  standings are wrong all season.
+
+The rule is that both ropers pay an entry fee — so the purse is built from two
+fees per team — and each end is credited the FULL amount. PRCA publishes these
+as "$X-a-Man" and headers and heelers carry separate world standings; one
+partner can make the NFR while the other does not.
+
+**Built instead:** `Rankable.team_members` plus
+`PayoutConfig.team_payout`. `payTeamPurse()` splits the purse into one equal
+pool per end and pays the identical team ranking out of each, so both ropers
+receive the same amount and the total disbursed equals the purse exactly.
+`split_between` covers ranch rodeo, where a crew enters once and divides its
+money. The payout ladder is now selected by team count rather than roper count,
+and `loadPayoutContext` joins `entries` so `partner_id` reaches the engine.
+
+Parity check, now a test: ten teams at $50 a man raises $1,000 and pays its
+winner $500; ten individuals at $50 raises $500 and pays its winner $500.
+
+`packages/engine/src/payouts/engine.ts`,
+`apps/api/src/core/database/repositories.ts`, `docs/AUDIT.md`
+
+---
+
 ## Carried forward unchanged
 
 These are noted in the architecture and remain open. They are **not** defects —

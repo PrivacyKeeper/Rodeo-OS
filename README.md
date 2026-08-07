@@ -8,7 +8,7 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Twenty-six defects are recorded; several
+before assuming the code is wrong.** Twenty-seven defects are recorded; several
 of them lose money or leak data.
 
 Rules were last reviewed against published sources on **8 August 2026** —
@@ -19,6 +19,10 @@ The product model — Procore for construction, Toast for restaurants, applied
 to rodeo — and what it demanded of the schema is in
 [`docs/MODEL.md`](docs/MODEL.md).
 
+**[`docs/AUDIT.md`](docs/AUDIT.md) walks four real rodeos end to end** — the
+NFR in Las Vegas, Cheyenne Frontier Days, a local Texas rodeo and an Oklahoma
+jackpot — with what passed, what broke, and what is still missing.
+
 ---
 
 ## What is here
@@ -28,7 +32,7 @@ supabase/migrations/     Full schema: 29 tables, RLS, immutability triggers,
                          287 seeded options, scoring/payout/division templates
 supabase/tests/          Schema invariants, run in CI
 packages/engine/         Scoring and payout engines. Zero dependencies,
-                         no I/O, 104 tests
+                         no I/O, 155 tests including real-rodeo scenarios
 apps/api/                Fastify API: auth, RLS-bound persistence, typed event
                          bus, offline sync, scoring, payouts, options, public
 docs/                    The model, architecture deltas, rule provenance,
@@ -61,8 +65,8 @@ Two properties it holds:
 
 ```
 $ cd packages/engine && node --test "test/*.test.ts"
-# tests 104
-# pass 104
+# tests 155
+# pass 155
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
@@ -146,10 +150,13 @@ triggers bind the service role too. Full reasoning in
 | Options layer | Complete — every dropdown is producer-extensible data |
 | Sidepots, templates, modules | Schema complete |
 | Scoring engine | Complete and tested — judged, timed, ranking, aggregate, D-format, handicap divisions |
+| Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
 | API persistence | Complete — repositories, RLS-bound connections, 32 integration tests |
 | Stripe Connect | Not started — ledger rows are written `pending` |
+| Entry & draw routes | Not started — schema complete, no endpoints |
+| Sidepot routes | Schema and payout maths done; no repository or route |
 | Web app (PWA) | Not started |
 | Timer Bridge | Not started |
 

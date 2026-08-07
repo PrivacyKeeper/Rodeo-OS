@@ -277,29 +277,48 @@ export async function loadPayoutContext(
      where rodeo_event_id = ${eventId} and org_id = ${orgId}
   `;
 
+  // A team roping run is ONE entry with a partner on it, and it places once.
+  // Joining the entry in is what lets the payout engine pay both ends: without
+  // partner_id the heeler is invisible and only the header gets a cheque.
   const scoreRows = await tx<
     {
+      entry_id: string;
       contestant_id: string;
+      partner_id: string | null;
       status: string;
       go_round: number;
       final_score: string | null;
       final_time: string | null;
     }[]
   >`
-    select contestant_id, status, go_round, final_score, final_time
-      from scores
-     where rodeo_event_id = ${eventId}
-       and org_id = ${orgId}
-       and status in ('official', 'no_time', 'dq')
-     order by go_round
+    select s.entry_id, s.contestant_id, e.partner_id, s.status, s.go_round,
+           s.final_score, s.final_time
+      from scores s
+      join entries e on e.id = s.entry_id
+     where s.rodeo_event_id = ${eventId}
+       and s.org_id = ${orgId}
+       and s.status in ('official', 'no_time', 'dq')
+     order by s.go_round
   `;
 
   const judged = event.scoring_mode === 'judged';
+  const isTeamEvent = (cfg.config as PayoutConfig).team_payout !== undefined;
+
   const toRankable = (r: (typeof scoreRows)[number]): Rankable => ({
-    contestant_id: r.contestant_id,
+    // A team is ranked by its ENTRY, not by one of its members: the same
+    // header can be on three teams in the same roping, and each run places
+    // separately.
+    contestant_id: isTeamEvent ? r.entry_id : r.contestant_id,
     status: r.status as Rankable['status'],
     final_score: judged && r.final_score !== null ? Number(r.final_score) : null,
     final_time: !judged && r.final_time !== null ? Number(r.final_time) : null,
+    ...(isTeamEvent
+      ? {
+          team_members: r.partner_id
+            ? [r.contestant_id, r.partner_id]
+            : [r.contestant_id],
+        }
+      : {}),
   });
 
   const byRound = new Map<number, Rankable[]>();

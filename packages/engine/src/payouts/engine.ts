@@ -256,6 +256,157 @@ export function payOnePurse(
 }
 
 // ---------------------------------------------------------------------------
+// Team events
+// ---------------------------------------------------------------------------
+
+/**
+ * Pay a purse to teams rather than to individuals.
+ *
+ * TEAM ROPING is the case that forces this to exist, and getting it wrong is
+ * a five-figure error at a big rodeo. The rules:
+ *
+ *   - A team places ONCE. Two ropers, one time on the clock.
+ *   - Both ropers paid an entry fee, so the purse was built from two fees per
+ *     team, not one.
+ *   - Each roper is credited the FULL place amount. PRCA publishes these as
+ *     "$X-a-Man", and headers and heelers carry separate world standings —
+ *     one partner can make the NFR while the other does not.
+ *
+ * Paying the whole purse to the team and then handing each roper that same
+ * amount would disburse twice the purse. Paying half each would under-credit
+ * both against every published result. The correct model, and the one here:
+ * split the purse into one equal pool per END, then pay the identical team
+ * ranking out of each pool. Header and heeler receive the same amount, that
+ * amount is what goes in the standings, and the total disbursed is exactly
+ * the purse.
+ *
+ * Worked check, winner-take-all: 10 teams, every roper pays $50, so the purse
+ * is 20 x $50 = $1,000 — twice what the same number of individual entries
+ * would raise. Two ends, so $500 per end pool. The winning team takes 100% of
+ * each: $500 to the header, $500 to the heeler, $1,000 out the door. An
+ * individual event with 10 entries at $50 raises $500 and pays its winner
+ * $500. Same money per person for the same field size and fee — which is
+ * exactly the equal-money parity the ropers put to the PRCA board.
+ *
+ * RANCH RODEO teams work the other way: one entry for the team, and the
+ * team's money is divided among its members. That is `split_between`.
+ */
+export function payTeamPurse(
+  netPurseCents: number,
+  rankedTeams: RankedResult[],
+  rule: PayoutRule,
+  config: PayoutConfig,
+  lineType: PayoutLine['type'] = 'prize',
+): { lines: PayoutLine[]; unpaidCents: number; issues: ValidationIssue[] } {
+  const issues: ValidationIssue[] = [];
+  const mode = config.team_payout ?? 'split_between';
+
+  const memberCounts = rankedTeams.map((r) => r.entry.team_members?.length ?? 0);
+  if (memberCounts.some((n) => n === 0)) {
+    issues.push({
+      field: 'team_members',
+      code: 'MISSING_TEAM_MEMBERS',
+      severity: 'error',
+      message:
+        'A team event needs team_members on every result; one or more are ' +
+        'missing, and nobody can be paid from a team with no people on it.',
+    });
+    return { lines: [], unpaidCents: netPurseCents, issues };
+  }
+
+  // ---- split_between: pay the team, then divide inside it -----------------
+  if (mode === 'split_between') {
+    const { lines: teamLines, unpaidCents } = payOnePurse(
+      netPurseCents,
+      rankedTeams,
+      rule,
+      config,
+      lineType,
+    );
+
+    const lines: PayoutLine[] = [];
+    for (const teamLine of teamLines) {
+      const team = rankedTeams.find(
+        (r) => r.contestant_id === teamLine.contestant_id,
+      );
+      const members = team?.entry.team_members ?? [];
+      if (members.length === 0) continue;
+
+      const shares = splitEvenly(teamLine.amount_cents, members.length);
+      assertReconciles(shares, teamLine.amount_cents, 'team split');
+
+      members.forEach((memberId, i) => {
+        lines.push({
+          ...teamLine,
+          contestant_id: memberId,
+          amount_cents: shares[i],
+          prize_cents: shares[i],
+          ground_money_cents: 0,
+          description: `Team share (${i + 1} of ${members.length})`,
+        });
+      });
+    }
+
+    assertReconciles(
+      lines.map((l) => l.amount_cents),
+      netPurseCents - unpaidCents,
+      'team purse (split_between)',
+    );
+    return { lines, unpaidCents, issues };
+  }
+
+  // ---- full_to_each: one equal pool per end -------------------------------
+  const ends = Math.max(...memberCounts);
+  if (memberCounts.some((n) => n !== ends)) {
+    issues.push({
+      field: 'team_members',
+      code: 'RAGGED_TEAM_SIZES',
+      severity: 'error',
+      message:
+        `Teams have different member counts (${[...new Set(memberCounts)].join(', ')}). ` +
+        'full_to_each splits the purse per end, so every team must have the same ends.',
+    });
+    return { lines: [], unpaidCents: netPurseCents, issues };
+  }
+
+  const endPools = splitEvenly(netPurseCents, ends);
+  assertReconciles(endPools, netPurseCents, 'end pools');
+
+  const lines: PayoutLine[] = [];
+  let unpaid = 0;
+
+  for (let end = 0; end < ends; end++) {
+    const { lines: endLines, unpaidCents } = payOnePurse(
+      endPools[end],
+      rankedTeams,
+      rule,
+      config,
+      lineType,
+    );
+    unpaid += unpaidCents;
+
+    for (const line of endLines) {
+      const team = rankedTeams.find((r) => r.contestant_id === line.contestant_id);
+      const memberId = team?.entry.team_members?.[end];
+      if (!memberId) continue;
+      lines.push({
+        ...line,
+        contestant_id: memberId,
+        description: `End ${end + 1} of ${ends}`,
+      });
+    }
+  }
+
+  assertReconciles(
+    lines.map((l) => l.amount_cents),
+    netPurseCents - unpaid,
+    'team purse (full_to_each)',
+  );
+
+  return { lines, unpaidCents: unpaid, issues };
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -264,7 +415,19 @@ export function calculatePayout(input: PayoutCalculationInput): PayoutResult {
   const config = input.payout_config;
 
   const counted = input.entries.filter((e) => COUNTS_AS_ENTERED.has(e.status));
-  const numEntries = counted.length;
+
+  // Every roper pays, but the payout LADDER is selected by how many teams are
+  // competing, not how many people. Ten teams is a ten-entry roping even
+  // though twenty fees came in the door.
+  const isTeamEvent = config.team_payout !== undefined;
+  const teamCount = isTeamEvent
+    ? new Set(
+        input.results
+          .filter((r) => r.team_members?.length)
+          .map((r) => r.contestant_id),
+      ).size
+    : 0;
+  const numEntries = isTeamEvent && teamCount > 0 ? teamCount : counted.length;
 
   const entryFeePool = counted.reduce(
     (s, e) => s + (e.entry_fee_cents ?? input.entry_fee_cents),
@@ -372,6 +535,24 @@ export function calculatePayout(input: PayoutCalculationInput): PayoutResult {
     });
   }
 
+  if (isTeamEvent) {
+    const team = payTeamPurse(netPurse, ranked, rule, config);
+    if (team.issues.some((i) => i.severity === 'error')) {
+      issues.push(...team.issues);
+      return empty;
+    }
+    return {
+      ok: true,
+      issues: [...issues, ...team.issues],
+      gross_purse_cents: grossPurse,
+      fees,
+      net_purse_cents: netPurse,
+      escrow_cents: 0,
+      unpaid_cents: team.unpaidCents,
+      payouts: team.lines,
+    };
+  }
+
   const { lines, unpaidCents } = payOnePurse(netPurse, ranked, rule, config);
 
   return {
@@ -477,7 +658,16 @@ export function calculateMultiRoundPayout(
   const split = config.go_round_average_split;
 
   const counted = input.entries.filter((e) => COUNTS_AS_ENTERED.has(e.status));
-  const numEntries = counted.length;
+  const isTeamEvent = config.team_payout !== undefined;
+  const teamCount = isTeamEvent
+    ? new Set(
+        [...input.results_by_round.values()]
+          .flat()
+          .filter((r) => r.team_members?.length)
+          .map((r) => r.contestant_id),
+      ).size
+    : 0;
+  const numEntries = isTeamEvent && teamCount > 0 ? teamCount : counted.length;
   const entryFeePool = counted.reduce(
     (s, e) => s + (e.entry_fee_cents ?? input.entry_fee_cents),
     0,
@@ -558,7 +748,9 @@ export function calculateMultiRoundPayout(
     const round = rounds[i];
     const field = input.results_by_round.get(round)!;
     const ranked = rankResults(field, { mode: input.scoring_mode });
-    const result = payOnePurse(perRound[i], ranked, rule, config, 'go_round');
+    const result = isTeamEvent
+      ? payTeamPurse(perRound[i], ranked, rule, config, 'go_round')
+      : payOnePurse(perRound[i], ranked, rule, config, 'go_round');
     for (const line of result.lines) lines.push({ ...line, go_round: round });
     unpaid += result.unpaidCents;
   }
@@ -566,7 +758,9 @@ export function calculateMultiRoundPayout(
   const averageRanked = rankResults(input.average_results, {
     mode: input.scoring_mode,
   });
-  const avg = payOnePurse(averagePool, averageRanked, rule, config, 'average');
+  const avg = isTeamEvent
+    ? payTeamPurse(averagePool, averageRanked, rule, config, 'average')
+    : payOnePurse(averagePool, averageRanked, rule, config, 'average');
   lines.push(...avg.lines);
   unpaid += avg.unpaidCents;
 
