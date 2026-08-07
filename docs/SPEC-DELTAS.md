@@ -670,3 +670,93 @@ sanctioned rodeo on an unverified template.
 What each rule is sourced from, and when it was last checked, is in
 [`RULES.md`](RULES.md). As of 8 August 2026 the PRCA, WPRA and PBR templates
 are sourced and dated; USTRC, WSTR and CPRA remain unverified.
+
+## D32 — A filing requirement that blocks the close is a deadlock · S1
+
+Seeding the PRCA compliance calendar, "Results filed with the association" was
+marked `blocks_close`. It is the requirement with the deadline and the fine on
+it, so it looked like the obvious one to gate on.
+
+It cannot be satisfied. Filing happens **after** closing: the books close, then
+the results go to the association. Gating the close on the filing means the
+books can never close, so the results can never be filed, so the requirement is
+never satisfied. Every sanctioned rodeo would have been permanently stuck one
+step from done, and the failure would have shown up in an arena office at
+11:40pm rather than in review.
+
+Found by the integration tests — `checkBooks` returned
+`COMPLIANCE_BLOCKER@Results filed with the association` on a rodeo whose money
+and scores were all correct.
+
+**Built instead:** the seed no longer marks it blocking, and `checkBooks`
+refuses to treat *any* requirement of type `filing` as a blocker whatever the
+row says, so a producer writing their own requirement cannot rebuild the trap.
+An invariant asserts no filing requirement anywhere is marked `blocks_close`.
+
+The wider lesson is the design rule this violated, which was written down in the
+same commit that broke it: **a secretary who cannot file at 11:40pm because the
+software wants paperwork will not use the software again.** Only money that does
+not reconcile, runs nobody scored and scores still provisional may block. In the
+seeded profiles nothing else does.
+
+`supabase/migrations/0019_sanction_layer.sql`, `packages/engine/src/books/engine.ts`
+
+---
+
+## D33 — The compliance calendar was withheld until it was pointless · S2
+
+`generate_compliance_items()` only picked up sanctioning rows with status
+`approved` or `conditional`.
+
+A committee that has just decided to run PRCA this year is `pending` — approval
+comes later, and **filing the approval application is item one on the very list
+being withheld.** The checklist that exists to get a rodeo approved was only
+issued once the rodeo was already approved.
+
+**Built instead:** `pending` generates the calendar too. The asymmetry with the
+books is deliberate and documented in the migration: the *money* rules (the
+association's percentage) and the *filing deadline* still apply only once a body
+has actually approved the rodeo, because owing an association 6% before it has
+agreed to sanction you is a different kind of wrong. Personnel shortfall follows
+the calendar, not the money — carded judges have to be lined up before approval,
+not after.
+
+`supabase/migrations/0019_sanction_layer.sql`
+
+---
+
+## D34 — A rodeo the wizard created could not be scored · S1
+
+The setup screen asks five questions and none of them is "which scoring
+configuration". The score route requires `scoring_config_id`. So every rodeo
+created through the interface produced events with a null config, and the first
+score submitted against any of them was rejected.
+
+A rodeo you can create but cannot score is worse than no setup screen at all:
+the failure lands after the entries are in, on the day.
+
+**Built instead:** `createRodeo()` resolves a default per event — the tenant's
+own config for this body and event first, then the system config for this body
+and event, then any config for the event. It will not cross event types under
+any circumstances, because a bareback configuration applied to barrel racing
+scores every run wrong and looks like it worked. An integration test asserts
+each event's resolved config matches its own event type.
+
+`apps/api/src/core/database/operations-repo.ts`
+
+---
+
+## D35 — The books chased fees that were never owed · S3
+
+`checkBooks` raised `UNPAID_ENTRY` for any entry whose collected amount was
+below the charged amount and whose status was not a scratch. That caught entries
+still sitting at `pending` — people who filled in a form, never confirmed, and
+never ran.
+
+Blocking a close at eleven at night over money from somebody who was never in
+the pot is exactly the noise this screen exists to avoid.
+
+**Built instead:** the unpaid check applies only to live entries — confirmed,
+drawn or competed. Caught by a unit test written before the behaviour was.
+
+`packages/engine/src/books/engine.ts`

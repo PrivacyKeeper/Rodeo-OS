@@ -8,8 +8,8 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Thirty-one defects are recorded; several
-of them lose money or leak data.
+before assuming the code is wrong.** Thirty-five defects are recorded; several
+of them lose money, leak data, or deadlock a rodeo one step from done.
 
 Rules were last reviewed against published sources on **8 August 2026** —
 what is sourced, what is not, and where each value came from is in
@@ -34,13 +34,17 @@ jackpot — with what passed, what broke, and what is still missing.
 ## What is here
 
 ```
-supabase/migrations/     Full schema: 29 tables + 2 public views, RLS,
-                         immutability triggers, 287 seeded options, templates
-supabase/tests/          Schema invariants, run in CI
-packages/engine/         Scoring and payout engines. Zero dependencies,
-                         no I/O, 208 tests including real-rodeo scenarios
-apps/api/                Fastify API: auth, RLS-bound persistence, entries,
-                         draw, scoring, payouts, settlement, sync, public
+supabase/migrations/     Full schema: 40 tables + 5 public views, RLS,
+                         immutability triggers, 287 seeded options,
+                         10 association profiles, templates
+supabase/tests/          30 schema invariants, run in CI
+packages/engine/         Scoring, payout, day sheet and books engines. Zero
+                         dependencies, no I/O, 291 tests
+apps/api/                Fastify API: auth, RLS-bound persistence, setup,
+                         entries, draw, scoring, payouts, day sheets, books,
+                         sanctioning, the record layer, sync, public
+apps/web/                Secretary interface. No bundler, no dependencies,
+                         no build step
 docs/                    The model, architecture deltas, rule provenance,
                          security, roadmap
 ```
@@ -71,13 +75,13 @@ Two properties it holds:
 
 ```
 $ cd packages/engine && node --test "test/*.test.ts"
-# tests 208
-# pass 208
+# tests 291
+# pass 291
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
-# tests 42
-# pass 42
+# tests 82
+# pass 82
 # fail 0
 ```
 
@@ -125,6 +129,9 @@ psql -f supabase/local/bootstrap.sql   # again, for grants on new tables
 npm install
 npm run dev --workspace @rodeo-os/api
 
+# Secretary interface — no install, no build
+npm run dev --workspace @rodeo-os/web    # http://localhost:5173
+
 # integration tests against a real database with RLS on
 cd apps/api
 TEST_DATABASE_URL=postgres://... node --test "test/*.test.ts"
@@ -152,14 +159,14 @@ triggers bind the service role too. Full reasoning in
 
 | Area | State |
 |---|---|
-| Database schema | Complete — 29 tables, RLS, triggers, 287 seeded options |
+| Database schema | Complete — 40 tables, RLS, triggers, 287 seeded options |
 | Options layer | Complete — every dropdown is producer-extensible data |
 | Sidepots, templates, modules | Schema complete |
 | Scoring engine | Complete and tested — judged, timed, ranking, aggregate, D-format, handicap divisions |
 | Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | Complete — repositories, RLS-bound connections, 42 integration tests |
+| API persistence | Complete — repositories, RLS-bound connections, 82 integration tests |
 | Entries | Complete — fee quoting, eligibility, turnouts, refunds |
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |
@@ -167,7 +174,14 @@ triggers bind the service role too. Full reasoning in
 | Stripe Connect | Not started — card rows sit `pending` until a processor confirms |
 | Results & standings | Complete — placings, average, D-divisions, season points |
 | Public scoreboard | Complete — name-only view, no PII reachable anonymously |
-| Web app (PWA) | Not started |
+| Day sheets | Complete — run order, stock, drags, printable plain text |
+| Close the books | Complete — blockers with fixes, filing deadline, append-only closure log |
+| Associations | Complete — 10 profiles as data; adding one is a row |
+| Sanctioning | Complete — compliance calendar, credentials, welfare, discipline |
+| The record | Complete — person and animal careers spanning organisations |
+| Secretary interface | **Usable** — setup, day sheet, scoring, books, sanctioning |
+| Supabase Auth in the UI | Not wired — token pasted in Settings |
+| Offline PWA | Not started |
 | Timer Bridge | Not started |
 
 Every request opens a transaction carrying the caller's verified JWT claims and
@@ -177,6 +191,37 @@ users**: a superuser bypasses RLS, so a test that passes as `postgres` proves
 nothing about whether one producer can read another's entries.
 
 Build order and what comes next: [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+---
+
+## The four things this is organised around
+
+**One.** The books close before the trailer leaves. A sanctioned rodeo has a
+wall-clock filing deadline with a fine on it, and the secretary is alone in an
+arena office at ten at night reconciling a payoff by hand. `checkBooks()` tells
+her exactly what is still wrong — naming the contestant and the fix, not "3
+issues found" — and nothing that is merely paperwork is ever allowed to stop
+her filing.
+
+**Two.** An association is a row, not a code path. Rules, event list, filing
+deadline, deduction basis, required credentials and compliance calendar all
+live in `associations` and `association_requirements`. Adding a state
+association is data entry. When breakaway roping was added to professional
+rodeo, the incumbent central system had trouble because it was not built to
+take another event; here that is one row.
+
+**Three.** A jackpot is never asked a question a jackpot cannot answer. The
+compliance layer hangs off sanctioning, so a rodeo nobody sanctions generates
+an empty checklist, has no deadline, no deduction and no credential
+requirements — and the interface hides the section entirely. There is an
+invariant asserting the open profile carries no requirements at all.
+
+**Four.** A run belongs to the person who made it. `career_runs` is global:
+one person, one animal, one record, across every organisation and every
+association — including rodeos that never ran on this platform, imported and
+labelled as such. No cowboy in America can currently see everything they have
+won this year in one place, and that is the fragmentation an event-shaped
+product cannot fix.
 
 ---
 

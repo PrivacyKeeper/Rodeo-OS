@@ -79,6 +79,14 @@ export const PERMISSIONS = {
   'financial.view': ['owner', 'admin', 'secretary'],
   'stock.manage': ['owner', 'admin', 'secretary', 'stock_contractor'],
   'waiver.manage': ['owner', 'admin', 'secretary'],
+  // Closing the books is the secretary's job by definition — she is the one
+  // sitting in the office at eleven at night with the deadline on her.
+  'books.close': ['owner', 'admin', 'secretary'],
+  // Reopening reverses a filed set of books. Narrower on purpose.
+  'books.reopen': ['owner', 'admin'],
+  'compliance.manage': ['owner', 'admin', 'secretary'],
+  'personnel.manage': ['owner', 'admin', 'secretary'],
+  'registry.manage': ['owner', 'admin', 'secretary'],
   'contestant.self': ['contestant'],
 } as const satisfies Record<string, readonly string[]>;
 

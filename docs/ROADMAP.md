@@ -6,7 +6,7 @@ Follows Appendix C of the architecture, adjusted for what is already done.
 
 ## Done
 
-**Schema.** 29 tables across 14 migrations, with RLS bound to `auth.uid()`,
+**Schema.** 40 tables across 20 migrations, with RLS bound to `auth.uid()`,
 composite tenant foreign keys, append-only triggers on the ledger and on signed
 waivers, and system scoring and payout templates for PRCA, PBR, WPRA, NBHA,
 IPRA and CPRA.
@@ -83,18 +83,58 @@ Still to wire:
 
 ---
 
+## Done — day sheets, the books, associations, the record and the interface
+
+**Day sheets.** Run order by the draw, back numbers, drawn stock, the
+contestant's own horse, partners, turnout and re-ride flags, and arena drags
+counted over live runs rather than entered ones. Rendered as JSON for a screen
+and as fixed-width text for the cheap printer in the arena office, because a
+rodeo that loses its network still runs if somebody printed the sheet.
+
+**Closing the books.** `checkBooks()` names every blocker and its fix, computes
+the filing deadline as a wall clock in the association's own timezone (which is
+two passes through the zone offset, not a fixed −0700), reconciles the purse to
+the cent, and refuses to close on anything that is genuinely wrong while never
+blocking on paperwork. Closing appends to `book_closures` — hashed, append-only,
+reversible only by a further row with a reason on it — and writes every official
+result into the contestants' global career records in the same transaction.
+
+**Associations as data.** Ten seeded profiles carrying rules, event lists,
+membership classes, required credentials, fee basis, standings formula and
+filing deadline, each stamped with what it was sourced from and whether it has
+been verified. A tenant can override any of them for their own use. Adding an
+association is a row.
+
+**The sanction layer.** Compliance requirements per association, instantiated
+per rodeo with real dates; a credential registry for carded judges, secretaries
+and timers with `personnel_shortfall()` reporting who is missing before the
+rodeo rather than after; append-only livestock-welfare records; and conduct and
+discipline records the subject can always read.
+
+**The record layer.** A global animal registry, a global `career_runs` ledger
+spanning organisations, and public views over both. Imported and self-reported
+runs are first-class and clearly labelled, because being the place the record
+LANDS does not require running every rodeo in the country.
+
+**Secretary interface.** `apps/web` — setup in five questions, day sheet,
+scoring, closing the books, and the sanctioning checklist. No bundler, no
+dependencies, no build step.
+
+---
+
 ## Phase 1 — Core, events, entries (weeks 1–6)
 
 - Organisation and user management, invitations, role assignment
-- Rodeo and rodeo-event CRUD, sanctioning approvals, performances
+- ~~Rodeo and rodeo-event CRUD~~ — done; sanctioning approvals workflow still open
 - Online entry with fee collection via Stripe
 - Draw generation, buddy groups, stock draw
 - Contestant portal: enter, view entries, view draw
 
 ## Phase 2 — Scoring, results, payouts in the UI (weeks 7–12)
 
-- Secretary terminal: manual score entry, correction, DQ, reride
-- Results calculation and publication, go-round and average standings
+- ~~Secretary terminal: manual score entry~~ — done; correction, DQ and reride
+  still need screens
+- ~~Results calculation~~ — done; publication and standings screens still open
 - Payout calculation review screen, then disbursement
 - Public results pages with SEO
 
@@ -108,7 +148,8 @@ Still to wire:
 ## Phase 4 — Compliance and reporting
 
 - Waiver signing flow with PDF generation
-- Insurance certificate tracking and expiry alerts
+- ~~Compliance calendar~~ — done
+- Insurance certificate tracking and expiry alerts (schema done, no alerts yet)
 - 1099 / T4A-NR / PAYG generation
 - PROCOM import and export, once the file format is obtained
 

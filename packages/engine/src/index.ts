@@ -90,6 +90,42 @@ export type {
   SubscriptionPricing,
 } from './pricing/engine.ts';
 
+export { buildDaySheet, dragMarks, renderDaySheetText } from './daysheet/engine.ts';
+export type {
+  DaySheet,
+  DaySheetEntry,
+  DaySheetEvent,
+  DaySheetInput,
+  DaySheetPersonnel,
+  DaySheetRun,
+  DaySheetSection,
+  DaySheetStock,
+  DragMark,
+  RunFlag,
+} from './daysheet/engine.ts';
+
+export {
+  associationDeduction,
+  checkBooks,
+  filingDeadline,
+  renderBooksText,
+  wallTimeToUtcMs,
+} from './books/engine.ts';
+export type {
+  AssociationFeeSchedule,
+  BlockerCode,
+  BooksComplianceRow,
+  BooksEntryRow,
+  BooksEventRow,
+  BooksInput,
+  BooksIssue,
+  BooksStatus,
+  BooksTotals,
+  FilingDeadline,
+  FilingRule,
+  WarningCode,
+} from './books/engine.ts';
+
 export { computeResults, expandTeamResults } from './results/engine.ts';
 export type {
   ComputeResultsInput,

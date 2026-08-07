@@ -289,4 +289,184 @@ begin
     raise notice 'PASS public: the scoreboard view carries no contact or tax columns';
 end $$;
 
+-- ============================================================================
+-- Associations, the sanction layer, the record layer and the books
+-- ============================================================================
+
+-- A tenant's own profile for a code must beat the system one, or a producer
+-- cannot correct an association's rules for their own use.
+do $$
+declare v_name text; v_org uuid := '11111111-1111-4111-8111-111111111111';
+begin
+    insert into associations (org_id, is_system, code, name, association_type)
+    values (v_org, false, 'PRCA', 'Our corrected PRCA profile', 'rodeo');
+
+    select (association_for(v_org, 'PRCA')).name into v_name;
+    if v_name <> 'Our corrected PRCA profile' then
+        raise exception 'FAIL associations: tenant override lost to the system profile (got %)', v_name;
+    end if;
+
+    select (association_for(gen_random_uuid(), 'PRCA')).name into v_name;
+    if v_name <> 'Professional Rodeo Cowboys Association' then
+        raise exception 'FAIL associations: one tenant''s override leaked to another';
+    end if;
+    raise notice 'PASS associations: a tenant override wins for that tenant and nobody else';
+end $$;
+
+-- The deadlock the integration tests found. Filing happens after closing, so a
+-- filing requirement that blocks the close can never be satisfied.
+do $$
+declare n int;
+begin
+    select count(*) into n
+      from association_requirements
+     where requirement_type = 'filing' and blocks_close;
+    if n > 0 then
+        raise exception 'FAIL sanction: % filing requirement(s) block the close — that deadlocks', n;
+    end if;
+    raise notice 'PASS sanction: no filing requirement blocks closing the books';
+end $$;
+
+-- An unsanctioned rodeo must be asked nothing at all.
+do $$
+declare n int;
+begin
+    select count(*) into n
+      from associations a
+      left join association_requirements r on r.association_id = a.id
+     where a.code = 'OPEN' and a.org_id is null and r.id is not null;
+    if n > 0 then
+        raise exception 'FAIL sanction: the open profile carries % requirement(s)', n;
+    end if;
+    raise notice 'PASS sanction: an unsanctioned rodeo is asked nothing';
+end $$;
+
+-- An unverified card is worth nothing. Anybody can type a number into a box.
+do $$
+declare v_user uuid := 'cccccccc-1111-4111-8111-111111111111';
+begin
+    insert into credentials (user_id, body_code, role, card_number, verified,
+                             issued_on, expires_on)
+    values (v_user, 'PRCA', 'judge', 'INV-1', false, '2026-01-01', '2026-12-31');
+
+    if credential_is_current(v_user, 'PRCA', 'judge', date '2026-06-01') then
+        raise exception 'FAIL credentials: an unverified card counted as current';
+    end if;
+
+    update credentials set verified = true where card_number = 'INV-1';
+    if not credential_is_current(v_user, 'PRCA', 'judge', date '2026-06-01') then
+        raise exception 'FAIL credentials: a verified, in-date card did not count';
+    end if;
+    if credential_is_current(v_user, 'PRCA', 'judge', date '2027-06-01') then
+        raise exception 'FAIL credentials: an expired card counted as current';
+    end if;
+    raise notice 'PASS credentials: only a verified, in-date card counts';
+end $$;
+
+-- A platform career run must point at a real rodeo. An imported one need not.
+do $$
+declare v_user uuid := 'cccccccc-1111-4111-8111-111111111111';
+begin
+    begin
+        insert into career_runs (contestant_id, rodeo_name, event_code, run_date, source)
+        values (v_user, 'Nowhere', 'barrel_racing', '2026-01-01', 'platform');
+        raise exception 'FAIL record: a platform run with no rodeo was accepted';
+    exception when check_violation then
+        raise notice 'PASS record: a platform run must reference a real rodeo';
+    end;
+
+    insert into career_runs (contestant_id, rodeo_name, event_code, run_date, source)
+    values (v_user, 'Somebody Else''s Rodeo', 'barrel_racing', '2026-01-01', 'imported');
+    raise notice 'PASS record: an off-platform run is first-class';
+end $$;
+
+-- Self-reported runs never reach the public record.
+do $$
+declare n int; v_user uuid := 'cccccccc-1111-4111-8111-111111111111';
+begin
+    insert into career_runs (contestant_id, rodeo_name, event_code, run_date, source)
+    values (v_user, 'I Definitely Won This', 'barrel_racing', '2026-02-01', 'self_reported');
+
+    select count(*) into n from public_career
+     where rodeo_name = 'I Definitely Won This';
+    if n > 0 then
+        raise exception 'FAIL record: a self-reported run is showing publicly';
+    end if;
+    raise notice 'PASS record: self-reported runs stay out of the public record';
+end $$;
+
+-- The public career view must not carry contact or tax columns either.
+do $$
+declare leaked text;
+begin
+    select string_agg(column_name, ', ') into leaked
+      from information_schema.columns
+     where table_name = 'public_career'
+       and column_name in ('email', 'phone', 'date_of_birth', 'address_line1',
+                           'postal_code', 'tax_id_last4', 'tax_id_type',
+                           'stripe_customer_id', 'stripe_account_id',
+                           'supabase_auth_id', 'memberships');
+    if leaked is not null then
+        raise exception 'FAIL record: public_career exposes %', leaked;
+    end if;
+    raise notice 'PASS record: the public career view carries no contact or tax columns';
+end $$;
+
+-- A set of books that does not balance is not a set of books.
+do $$
+declare v_org uuid := '11111111-1111-4111-8111-111111111111';
+        v_rodeo uuid;
+begin
+    select id into v_rodeo from rodeos where org_id = v_org limit 1;
+
+    begin
+        insert into book_closures (org_id, rodeo_id, sequence, closure_type,
+                                   gross_purse_cents, association_deduction_cents,
+                                   net_purse_cents, totals_hash)
+        values (v_org, v_rodeo, 900, 'closed', 100000, 6000, 80000, '');
+        raise exception 'FAIL books: an unbalanced closure was accepted';
+    exception when check_violation then
+        raise notice 'PASS books: a closure that does not reconcile is rejected';
+    end;
+
+    insert into book_closures (org_id, rodeo_id, sequence, closure_type,
+                               gross_purse_cents, association_deduction_cents,
+                               net_purse_cents, totals_hash)
+    values (v_org, v_rodeo, 901, 'closed', 100000, 6000, 94000, 'supplied-by-caller');
+
+    -- The hash is computed by the database, never accepted from the caller.
+    if exists (select 1 from book_closures
+                where rodeo_id = v_rodeo and sequence = 901
+                  and totals_hash = 'supplied-by-caller') then
+        raise exception 'FAIL books: the caller''s hash was stored verbatim';
+    end if;
+    raise notice 'PASS books: the totals hash is computed, not accepted';
+
+    begin
+        update book_closures set paid_out_cents = 1
+         where rodeo_id = v_rodeo and sequence = 901;
+        raise exception 'FAIL books: a closure was edited';
+    exception when others then
+        if sqlerrm like 'FAIL%' then raise; end if;
+        raise notice 'PASS books: a closure is append-only';
+    end;
+end $$;
+
+-- A welfare record is evidence. Evidence is not editable.
+do $$
+declare v_org uuid := '11111111-1111-4111-8111-111111111111';
+begin
+    insert into welfare_records (org_id, record_type, occurred_at, description)
+    values (v_org, 'vet_on_site', now(), 'Dr Ames on the grounds from 6pm');
+
+    begin
+        update welfare_records set description = 'Nobody was here'
+         where org_id = v_org;
+        raise exception 'FAIL welfare: a welfare record was rewritten';
+    exception when others then
+        if sqlerrm like 'FAIL%' then raise; end if;
+        raise notice 'PASS welfare: a welfare record cannot be rewritten';
+    end;
+end $$;
+
 rollback;

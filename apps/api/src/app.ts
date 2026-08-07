@@ -17,6 +17,11 @@ import { registerDrawModule } from './modules/draw/routes.ts';
 import { registerOptionsModule } from './modules/options/routes.ts';
 import { registerResultsModule } from './modules/results/routes.ts';
 import { registerPublicModule } from './modules/public/routes.ts';
+import { registerRodeosModule } from './modules/rodeos/routes.ts';
+import { registerDaySheetModule } from './modules/daysheet/routes.ts';
+import { registerBooksModule } from './modules/books/routes.ts';
+import { registerSanctionModule } from './modules/sanction/routes.ts';
+import { registerRecordModule } from './modules/record/routes.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -104,6 +109,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     await scoped.register(registerEntriesModule);
     await scoped.register(registerDrawModule);
     await scoped.register(registerResultsModule);
+    await scoped.register(registerRodeosModule);
+    await scoped.register(registerDaySheetModule);
+    await scoped.register(registerBooksModule);
+    await scoped.register(registerSanctionModule);
+    await scoped.register(registerRecordModule);
     await scoped.register(registerScoringModule);
     await scoped.register(registerPayoutsModule);
     await scoped.register(registerSyncModule);
