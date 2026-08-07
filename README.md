@@ -19,8 +19,9 @@ The product model — Procore for construction, Toast for restaurants, applied
 to rodeo — and what it demanded of the schema is in
 [`docs/MODEL.md`](docs/MODEL.md).
 
-[`docs/PRICING.md`](docs/PRICING.md) sets out the business model — free to
-the producer, 2% to the contestant, zero for subscribers — with the competitor
+[`docs/PRICING.md`](docs/PRICING.md) sets out the business model — a tiered
+producer subscription from free to $299/mo, Stripe at cost, and nothing taken
+on the money flow — with the competitor
 rates it was set against. The numbers are computed by the engine, not typed
 into a table.
 

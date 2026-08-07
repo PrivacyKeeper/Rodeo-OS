@@ -66,8 +66,13 @@ export {
   COMPETITORS,
   DEFAULT_PLATFORM_FEES,
   RODEOAPPS_SUBSCRIPTION,
+  PASS_THROUGH_FEES,
+  PRODUCER_PLANS,
   STRIPE_STANDARD,
   calculatePlatformFee,
+  compareModels,
+  planFor,
+  recommendPlan,
   compareAllIn,
   modelContestant,
   subscriptionBreakEven,
@@ -79,7 +84,9 @@ export type {
   PlatformFeeConfig,
   PlatformFeeInput,
   PlatformFeeResult,
+  ModelComparison,
   ProcessorRates,
+  ProducerPlan,
   SubscriptionPricing,
 } from './pricing/engine.ts';
 

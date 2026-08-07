@@ -4,6 +4,10 @@ import assert from 'node:assert/strict';
 import {
   COMPETITORS,
   DEFAULT_PLATFORM_FEES,
+  PASS_THROUGH_FEES,
+  PRODUCER_PLANS,
+  compareModels,
+  recommendPlan,
   calculatePlatformFee,
   compareAllIn,
   modelContestant,
@@ -178,5 +182,104 @@ describe('revenue model', () => {
       avg_entry_cents: toCents(100), subscriber: false,
     };
     assert.deepEqual(modelContestant(p), modelContestant(p));
+  });
+});
+
+describe('producer plans', () => {
+  it('the ladder actually has rungs', () => {
+    // Regression: Starter was unlimited, so recommendPlan could never return
+    // Pro or Association and the top of the market went unpriced.
+    assert.equal(recommendPlan(60).code, 'grassroots');
+    assert.equal(recommendPlan(1_200).code, 'starter');
+    assert.equal(recommendPlan(2_400).code, 'pro');
+    assert.equal(recommendPlan(50_000).code, 'association');
+  });
+
+  it('every plan above the free one is reachable', () => {
+    const reachable = new Set(
+      [60, 500, 1_200, 3_000, 9_000, 25_000, 100_000].map(
+        (n) => recommendPlan(n).code,
+      ),
+    );
+    for (const plan of PRODUCER_PLANS) {
+      assert.ok(reachable.has(plan.code), `${plan.code} is unreachable`);
+    }
+  });
+
+  it('exactly one plan is free, and it is the smallest', () => {
+    const free = PRODUCER_PLANS.filter((p) => p.monthly_cents === 0);
+    assert.equal(free.length, 1);
+    assert.equal(free[0].code, 'grassroots');
+    assert.ok(free[0].entry_limit !== null, 'the free tier must be capped');
+  });
+
+  it('annual is cheaper than twelve months', () => {
+    for (const p of PRODUCER_PLANS) {
+      if (p.monthly_cents === 0) continue;
+      assert.ok(
+        p.annual_cents < p.monthly_cents * 12,
+        `${p.code} annual is not a discount`,
+      );
+    }
+  });
+
+  it('each rung includes everything the one below it does', () => {
+    for (let i = 1; i < PRODUCER_PLANS.length; i++) {
+      const lower = new Set(PRODUCER_PLANS[i - 1].modules);
+      for (const m of lower) {
+        assert.ok(
+          PRODUCER_PLANS[i].modules.includes(m),
+          `${PRODUCER_PLANS[i].code} drops '${m}' that ${PRODUCER_PLANS[i - 1].code} has`,
+        );
+      }
+    }
+  });
+
+  it('pass-through takes nothing on the money flow', () => {
+    const r = calculatePlatformFee({
+      entry_total_cents: toCents(100),
+      subscriber: false,
+      config: PASS_THROUGH_FEES,
+    });
+    assert.equal(r.platform_fee_cents, 0);
+    assert.equal(r.platform_net_cents, 0);
+    // The contestant pays the entry plus what the card actually costs.
+    assert.equal(r.contestant_pays_cents, toCents(100) + r.processing_fee_cents);
+  });
+
+  it('pass-through is the cheapest entry in the sport', () => {
+    const rows = compareAllIn(toCents(100), false, PASS_THROUGH_FEES);
+    const ours = rows.find((r) => r.name === 'RodeoApps')!;
+    for (const other of rows.filter((r) => r.name !== 'RodeoApps')) {
+      assert.ok(
+        ours.contestant_pays_cents < other.contestant_pays_cents,
+        `${other.name} is cheaper than pass-through`,
+      );
+    }
+  });
+
+  it('the flat plan is cheaper for the producer than a 2% cut, at every size', () => {
+    // This is the sales argument, and it has to be true rather than asserted.
+    for (const [entries, avg] of [
+      [200, 50], [1_200, 50], [300, 100], [2_400, 125], [10_000, 150],
+    ] as [number, number][]) {
+      const c = compareModels(entries, toCents(avg));
+      assert.ok(
+        c.producer_saves_cents > 0,
+        `at ${entries} entries of $${avg} the flat plan costs more`,
+      );
+    }
+  });
+
+  it('a cash-only jackpot still pays us, which a percentage model does not', () => {
+    // A percentage of card volume earns zero from a rodeo run out of a cash
+    // box. The subscription is independent of how the money moved.
+    const plan = recommendPlan(1_200);
+    assert.ok(plan.annual_cents > 0);
+    const pct = calculatePlatformFee({
+      entry_total_cents: 0, // nothing crossed a card
+      subscriber: false,
+    });
+    assert.equal(pct.platform_net_cents, 0);
   });
 });

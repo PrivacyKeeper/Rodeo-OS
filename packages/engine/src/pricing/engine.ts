@@ -339,3 +339,187 @@ export function compareAllIn(
 
   return rows;
 }
+
+// ---------------------------------------------------------------------------
+// Flat producer subscription — the recommended model
+// ---------------------------------------------------------------------------
+
+/**
+ * A producer plan.
+ *
+ * The alternative to taking a percentage of entries, and the one this platform
+ * should sell. The reasoning is in docs/PRICING.md; the short version is that
+ * a flat price is one sentence to sell, it captures cash rodeos that a
+ * percentage model earns nothing from, and charging zero on the money flow
+ * makes this the cheapest place in the country to enter a rodeo — which is a
+ * producer's argument to their own field, not just ours to them.
+ */
+export interface ProducerPlan {
+  code: string;
+  label: string;
+  monthly_cents: number;
+  annual_cents: number;
+  /** Entries a year included. Null = unlimited. */
+  entry_limit: number | null;
+  /** Module codes this plan turns on, from reference_options domain 'module'. */
+  modules: string[];
+}
+
+/**
+ * The ladder.
+ *
+ * A free bottom rung is not generosity, it is defence: Rodeo Producer is
+ * effectively free for a producer who takes online payments, so a $29.99 floor
+ * would hand them every weekly roping in the country. Free below 100 entries a
+ * year costs almost nothing to serve and keeps the grassroots on the platform,
+ * where their contestants join the apps.
+ *
+ * The upper rungs exist because a flat price with no ladder charges an
+ * association pushing 10,000 entries the same as somebody running two jackpots
+ * a year. That is not simplicity, it is leaving the top of the market unpriced.
+ */
+export const PRODUCER_PLANS: ProducerPlan[] = [
+  {
+    code: 'grassroots',
+    label: 'Grassroots',
+    monthly_cents: 0,
+    annual_cents: 0,
+    entry_limit: 100,
+    modules: ['events', 'entries', 'contestants', 'results', 'waivers'],
+  },
+  {
+    // The rung that stops a flat model punishing the grassroots. A weekly
+    // roping doing 200 entries a year at $25-50 a head is over the free cap
+    // but nowhere near worth $29.99 a month — modelled against a 2% cut it
+    // would be paying MORE for the flat plan, which is the one outcome that
+    // makes the whole pitch collapse. $9.99 keeps it honest at every size.
+    code: 'club',
+    label: 'Club',
+    monthly_cents: 999,
+    annual_cents: 9990,
+    entry_limit: 500,
+    modules: [
+      'events', 'entries', 'contestants', 'results', 'waivers',
+      'scoring', 'payouts',
+    ],
+  },
+  {
+    code: 'starter',
+    label: 'Starter',
+    monthly_cents: 2999,
+    annual_cents: 29990, // two months free on annual
+    // Capped, or the ladder has no rungs above it: if Starter were unlimited
+    // an association pushing 10,000 entries would sit on it forever and the
+    // top of the market would go unpriced. 1,500 covers a weekly roping and a
+    // committee running a handful of rodeos a year, which is who it is for.
+    entry_limit: 1_500,
+    modules: [
+      'events', 'entries', 'contestants', 'results', 'waivers',
+      'scoring', 'payouts', 'sidepots',
+    ],
+  },
+  {
+    code: 'pro',
+    label: 'Pro',
+    monthly_cents: 9900,
+    annual_cents: 99000,
+    entry_limit: 10_000,
+    modules: [
+      'events', 'entries', 'contestants', 'results', 'waivers',
+      'scoring', 'payouts', 'sidepots', 'handicap',
+      'timer', 'broadcast', 'stock', 'analytics',
+    ],
+  },
+  {
+    code: 'association',
+    label: 'Association',
+    monthly_cents: 29900,
+    annual_cents: 299000,
+    entry_limit: null,
+    modules: [
+      'events', 'entries', 'contestants', 'results', 'waivers',
+      'scoring', 'payouts', 'sidepots', 'handicap',
+      'timer', 'broadcast', 'stock', 'analytics', 'series', 'tax',
+    ],
+  },
+];
+
+/**
+ * Pass-through processing: the platform takes nothing on the money flow.
+ *
+ * This is the configuration that goes with a flat subscription. The contestant
+ * pays the entry plus what the card actually costs, and not one cent more.
+ */
+export const PASS_THROUGH_FEES: PlatformFeeConfig = {
+  standard_percent: 0,
+  standard_fixed_cents: 0,
+  subscriber_percent: 0,
+  subscriber_fixed_cents: 0,
+  card_fees: 'contestant',
+  processor: STRIPE_STANDARD,
+};
+
+export function planFor(code: string): ProducerPlan | null {
+  return PRODUCER_PLANS.find((p) => p.code === code) ?? null;
+}
+
+/**
+ * Cheapest plan that covers an expected annual entry count.
+ *
+ * A producer who needs a specific module (timer integration, say) may sit
+ * above this — the entry count is the floor, not the ceiling.
+ */
+export function recommendPlan(entriesPerYear: number): ProducerPlan {
+  const fits = PRODUCER_PLANS.filter(
+    (p) => p.entry_limit === null || entriesPerYear <= p.entry_limit,
+  );
+  if (fits.length === 0) {
+    // Above every cap: the unlimited plan, which is the last rung by design.
+    return PRODUCER_PLANS[PRODUCER_PLANS.length - 1];
+  }
+  return fits.reduce((cheapest, p) =>
+    p.monthly_cents < cheapest.monthly_cents ? p : cheapest,
+  );
+}
+
+export interface ModelComparison {
+  entries_per_year: number;
+  /** What a percentage model would take from this producer. */
+  percentage_model_cents: number;
+  /** What the flat plan costs them. */
+  flat_model_cents: number;
+  plan: string;
+  /** Positive when the flat plan is cheaper for the producer. */
+  producer_saves_cents: number;
+}
+
+/**
+ * Compare the two models for one producer.
+ *
+ * Reported from the PRODUCER's side deliberately. A pricing decision made only
+ * on which model bills more is how a platform prices itself out of the market
+ * it is trying to enter.
+ */
+export function compareModels(
+  entriesPerYear: number,
+  avgEntryCents: number,
+  percentageConfig: PlatformFeeConfig = DEFAULT_PLATFORM_FEES,
+): ModelComparison {
+  const perEntry = calculatePlatformFee({
+    entry_total_cents: avgEntryCents,
+    subscriber: false,
+    config: percentageConfig,
+  }).platform_net_cents;
+
+  const plan = recommendPlan(entriesPerYear);
+  const flat = plan.annual_cents;
+  const pct = perEntry * entriesPerYear;
+
+  return {
+    entries_per_year: entriesPerYear,
+    percentage_model_cents: pct,
+    flat_model_cents: flat,
+    plan: plan.code,
+    producer_saves_cents: pct - flat,
+  };
+}

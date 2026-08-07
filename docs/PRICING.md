@@ -41,7 +41,68 @@ cheaper than RodeoReady at every entry size from $25 to $500.
 
 ---
 
-## The model
+## The recommendation: flat, tiered, and we take nothing on the money
+
+**Revised 8 August 2026.** The first version of this document recommended
+taking 2% of every entry. That was modelled from competitor rates and the
+Procore pattern, and it optimised for one thing — zero adoption barrier —
+while underweighting the thing that actually decides whether a platform gets
+adopted at all: **somebody has to sell it.**
+
+A percentage of every entry is a hard conversation with a volunteer committee
+secretary. A single monthly number is one sentence. Re-modelled, the flat plan
+also wins on three things the percentage model loses outright:
+
+1. **Cash rodeos.** A jackpot run out of a cash box pays a percentage model
+   **nothing**. A subscription is independent of how the money moved, and a
+   large share of ropings and small rodeos still run on cash.
+2. **The contestant price.** Taking zero on the money flow makes this the
+   cheapest place in the country to enter a rodeo — **$103.20 on a $100
+   entry, card cost only**, for everyone, not just subscribers. That is a
+   producer's argument to their own field, not just ours to them.
+3. **Predictability.** Producers budget. So do we.
+
+The percentage model bills more in a mature market. It is worse at getting to
+one. Both are implemented; the flat ladder is the default.
+
+---
+
+## The ladder
+
+| Plan | Price | Entries/yr | What it adds |
+|---|---|---|---|
+| **Grassroots** | **Free** | ≤ 100 | Events, entries, contestants, results, waivers |
+| **Club** | $9.99/mo · $99.90/yr | ≤ 500 | + scoring, payouts |
+| **Starter** | $29.99/mo · $299.90/yr | ≤ 1,500 | + sidepots |
+| **Pro** | $99/mo · $990/yr | ≤ 10,000 | + timer, broadcast, stock, analytics, handicap |
+| **Association** | $299/mo · $2,990/yr | unlimited | + multi-rodeo series, tax reporting |
+
+**Stripe at cost on top. We add nothing to the money flow.**
+
+Two rungs exist for reasons the model forced, not for tidiness:
+
+- **Grassroots is free** as defence, not generosity. Rodeo Producer is
+  effectively free to a producer who takes online payments; a $29.99 floor
+  would hand them every playday in the country.
+- **Club exists because the flat model has a trap.** A weekly roping doing 200
+  entries a year at $50 a head is over the free cap but nowhere near worth
+  $29.99 a month — against a 2% cut it would be paying **more** for the flat
+  plan. That single outcome collapses the whole pitch, and a test now asserts
+  it cannot happen at any size.
+
+Every producer above the free tier pays less than a 2% cut would have taken:
+
+| Producer | Entries/yr | Plan | Pays | 2% would be |
+|---|---|---|---|---|
+| Playday, 3 a year | 60 | Grassroots | **$0** | $30 |
+| Local committee | 300 | Club | **$99.90** | $600 |
+| Weekly roping | 1,200 | Starter | **$299.90** | $1,200 |
+| Multi-rodeo producer | 2,400 | Pro | **$990** | $6,000 |
+| Association | 10,000 | Pro | **$990** | $30,000 |
+
+---
+
+## The old model, kept for comparison
 
 **Three legs. The producer pays for none of them.**
 
@@ -57,6 +118,9 @@ are the distribution channel.** Every rodeo run on the platform puts its whole
 field of contestants into it.
 
 ### 2. The contestant pays a platform fee — unless they subscribe
+
+*(Not recommended — see the ladder above. Retained because the engine
+implements both and a percentage may be right for a specific channel deal.)*
 
 **2.0% of the entry, capped at $15. Subscribers pay nothing.**
 
@@ -210,13 +274,58 @@ for the producer than running it somewhere else.**
 
 ---
 
+## What the $4.99 contestant subscription is for, now
+
+Under the flat model there is **no fee to avoid**, so the subscription has to
+stand on its own — and it should. Sold honestly it is: nine apps for one price,
+the draw in your pocket, live results, your whole career record, season
+earnings and standings, and the community for your event.
+
+That is a consumer product at Spotify money. It is a **better** proposition
+than "avoid a $2 fee", because it does not depend on the contestant entering
+enough rodeos for the arithmetic to work — the weekend roper who would never
+have cleared the fee break-even is now a legitimate customer rather than
+somebody being sold a discount they will not use.
+
+The two products stay separate, aimed at two different people:
+
+- **Producers** pay for the OS, by plan.
+- **Contestants** pay $4.99/mo or $49.99/yr for the apps.
+
+Neither subsidises the other on paper, and both make the other worth having.
+
+---
+
+## Should we add anything on top?
+
+**No — not yet, and probably not on the money flow.** Stacking a per-entry fee
+on a subscription is the worst of both: it loses the "we don't touch your
+contestants' money" pitch, which is the sharpest differentiator available, and
+it still leaves a subscription to sell.
+
+Three add-ons are clean because they are sold to the same buyer and explain
+themselves:
+
+1. **Higher plan rungs** — already the ladder.
+2. **Sponsorship and ticketing** — producer revenue tools, a natural upsell.
+3. **Association channel deals** — bulk contestant subscriptions sold through
+   a state association, which makes the association the salesforce.
+
+One worth watching: at zero take on the money flow, the platform still carries
+the **operational cost and risk of being in the payment path** — chargebacks,
+disputes, connected-account onboarding, and reporting obligations as the
+facilitator. If that proves expensive, a small **flat** per-transaction fee
+(cents, not a percentage) preserves the "no percentage" position while covering
+it. Worth confirming with an accountant before launch rather than assuming.
+
+---
+
 ## Open questions worth deciding before launch
 
-1. **Cash and check entries.** Money taken at the desk never crosses a card,
-   so no platform fee is collected. A jackpot could run entirely on cash and
-   pay nothing. Options: a small flat per-entry fee on cash entries, or accept
-   it as the price of getting the software into the arena. **Recommendation:
-   accept it.** Chasing $1 on a cash entry is how you lose the producer.
+1. ~~**Cash and check entries.**~~ **Solved by the flat model** — the
+   subscription does not care how the money moved. This was the strongest
+   single argument against taking a percentage, and it only became obvious
+   once both models were run side by side.
 2. **Association bulk subscriptions.** A state association buying subscriptions
    for its whole membership is worth more than the same conversions one at a
    time, and it makes the association the seller. Needs a channel price.
