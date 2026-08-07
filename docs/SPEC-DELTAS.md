@@ -547,6 +547,33 @@ winner $500; ten individuals at $50 raises $500 and pays its winner $500.
 
 ---
 
+## D28 — `SELECT ... FOR UPDATE` returns nothing on an append-only RLS table · S2
+
+Found while building settlement. `settleTransaction()` locked the ledger row
+the obvious way:
+
+```sql
+select id, amount, status from financial_transactions
+ where id = $1 and org_id = $2
+ for update
+```
+
+Postgres applies the **UPDATE** policy to a locking read, and
+`financial_transactions` deliberately has no UPDATE policy at all — the ledger
+is append-only (D9). So the lock matched **zero rows for every caller**, and
+settlement reported every payment in the system as missing.
+
+The two guarantees were correct individually and broke each other in
+combination, which is exactly the kind of interaction no unit test reaches.
+
+**Built instead:** `pg_advisory_xact_lock(hashtextextended(id, 0))`. It
+serialises concurrent settlements of the same payment, takes no row
+privileges, and releases when the transaction ends either way.
+
+`apps/api/src/core/settlement.ts`
+
+---
+
 ## Carried forward unchanged
 
 These are noted in the architecture and remain open. They are **not** defects —

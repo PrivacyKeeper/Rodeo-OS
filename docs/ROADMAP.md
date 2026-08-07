@@ -32,27 +32,54 @@ options CRUD, public results and SSE.
 
 ---
 
-## Done — persistence
+## Done — entries, draw and settlement
 
-Every storage function the API modules declared is implemented and tested
-against a real PostgreSQL database with RLS enabled.
+The three things that stood between this and a rodeo running on it.
 
-- `core/database/client.ts` — pooled connections plus `asUser()`, `asAnon()`
-  and `asService()`. `asUser()` opens a transaction, binds the caller's
-  verified JWT claims via `set_config` as a **parameter**, and switches to the
-  `authenticated` role, so every query is filtered by policy rather than by
-  application code. `asService()` bypasses RLS and requires a written reason.
-- `core/database/repositories.ts` — options, scoring, payouts, sync and public
-  reads. All money converts to integer cents in exactly one place.
-- `apps/api/test/persistence.test.ts` — 32 tests, run **as real users**.
+**Take an entry.** `quoteEntryFees()` itemises what a contestant owes — entry
+fee, stock charge, office fee, late fee, sidepot buy-ins — with a destination
+on every line, because the office fee and the purse go to different people.
+Team roping collects both ends. `checkEntryEligibility()` reports every reason
+somebody cannot enter at once rather than one at a time, and distinguishes a
+contestant entering online from a secretary taking a day-of entry at the desk.
+`classifyTurnout()` applies the 30-hour rule, excuses documented medical and
+veterinary releases however late, and decides whether fees come back.
+
+Routes: `GET .../entry-quote` (read-only, for the entry screen),
+`POST .../entries` (entry, fees and sidepot buy-ins in one transaction, so
+nobody is left entered-but-unpaid), `POST .../entries/:id/turnout`.
+
+**Make a draw.** Seeded and reproducible: same seed, same draw, so "the draw
+was witnessed" is a checkable claim rather than a promise. Fisher-Yates over a
+mulberry32 PRNG — the naive `sort(() => rng() - 0.5)` shuffle is biased and
+would hand out favourable positions unevenly. Entries are sorted before
+shuffling so the draw cannot depend on the order rows came back from the
+database. Balances across performances, overflows into slack, keeps buddy
+groups together, and never draws one contestant twice in the same performance.
+Stock draw excludes injured and retired animals and gives no animal two outs in
+a round. Re-draw for turnouts and rerides cannot hand back an animal already
+going.
+
+Routes: `POST .../draw` (preview by default, `commit: true` to write and record
+the seed in the audit log), `POST .../draw/stock`, `POST .../entries/:id/redraw`.
+
+**Move money.** A state machine over the ledger, not a Stripe wrapper — a
+platform that can only pay by card cannot run a jackpot. Cash, check, card,
+ACH and account credit all move a row through the same states and leave the
+same audit trail. Cash and check settle on the spot; card and ACH sit pending
+until confirmed. A completed payment cannot be walked back to pending, only
+refunded, and refunds are new rows rather than edits.
+
+Routes: `POST .../payouts/settle`. Entry money is recorded by the entry route.
 
 Still to wire:
 
 1. Supabase Auth custom-access-token hook writing `user_id` and
    `org_memberships` into the JWT from `org_members`.
 2. Stripe Connect: onboarding for producers and for contestants who receive
-   payouts, and the transfer that moves a `pending` ledger row to `completed`.
-3. Entry and draw endpoints — the schema is there, the routes are not.
+   payouts, plus the webhook that moves a pending row to completed.
+3. A results writer — `results` is read by standings and payouts but nothing
+   populates it from `scores` yet.
 
 ---
 

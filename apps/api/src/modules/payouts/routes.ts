@@ -22,6 +22,7 @@ import {
 import { requirePermission } from '../../core/auth.ts';
 import { claimsFor } from '../../core/database/client.ts';
 import * as repo from '../../core/database/repositories.ts';
+import { SettlementError, settleBatch } from '../../core/settlement.ts';
 
 export const registerPayoutsModule: FastifyPluginAsync = async (fastify) => {
   /**
@@ -264,6 +265,70 @@ export const registerPayoutsModule: FastifyPluginAsync = async (fastify) => {
         data: { ...out, display_total: formatCents(out.total_cents) },
         meta: { request_id: request.id },
       });
+    },
+  );
+
+  /**
+   * POST .../payouts/settle
+   *
+   * The money physically left. At a jackpot that is the secretary emptying the
+   * cash box; at a big rodeo it is checks or a Stripe transfer. Same endpoint
+   * either way — settlement is a state machine over the ledger, not a Stripe
+   * wrapper, so a producer with no card processor is not a second-class user.
+   */
+  fastify.post<{
+    Params: { org_id: string; rodeo_id: string };
+    Body: {
+      idempotency_key: string;
+      payment_method: string;
+      reference?: string;
+      confirm: boolean;
+    };
+  }>(
+    '/rodeos/:rodeo_id/payouts/settle',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['idempotency_key', 'payment_method', 'confirm'],
+          additionalProperties: false,
+          properties: {
+            idempotency_key: { type: 'string', minLength: 8, maxLength: 128 },
+            payment_method: { type: 'string', maxLength: 32 },
+            reference: { type: 'string', maxLength: 200 },
+            confirm: { type: 'boolean', const: true },
+          },
+        },
+      },
+      preHandler: requirePermission('payout.disburse'),
+    },
+    async (request, reply) => {
+      const { org_id } = request.params;
+      try {
+        const out = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+          settleBatch(tx, {
+            org_id,
+            idempotency_key: request.body.idempotency_key,
+            to_status: 'completed',
+            payment_method: request.body.payment_method,
+            reference: request.body.reference,
+            actor_id: request.auth!.user.user_id,
+          }),
+        );
+
+        return reply.send({
+          data: { ...out, display_total: formatCents(out.total_cents) },
+          meta: { request_id: request.id },
+        });
+      } catch (err) {
+        if (err instanceof SettlementError) {
+          return reply.status(err.code === 'BATCH_NOT_FOUND' ? 404 : 409).send({
+            error: { code: err.code, message: err.message },
+            meta: { request_id: request.id },
+          });
+        }
+        throw err;
+      }
     },
   );
 };

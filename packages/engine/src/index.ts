@@ -63,6 +63,41 @@ export type {
 } from './payouts/engine.ts';
 
 export {
+  checkEntryEligibility,
+  classifyTurnout,
+  quoteEntryFees,
+} from './entries/fees.ts';
+export type {
+  EntryEligibility,
+  EntryEligibilityInput,
+  EntryFeeInput,
+  EntryFeeQuote,
+  FeeLine,
+  TurnoutInput,
+  TurnoutResult,
+} from './entries/fees.ts';
+
+export {
+  generateDraw,
+  generateStockDraw,
+  makeRng,
+  redrawStock,
+  shuffle,
+} from './draw/engine.ts';
+export type {
+  DrawAssignment,
+  DrawEntry,
+  DrawMethod,
+  DrawRequest,
+  DrawResult,
+  DrawableAnimal,
+  PerformanceSlot,
+  StockAssignment,
+  StockDrawRequest,
+  StockDrawResult,
+} from './draw/engine.ts';
+
+export {
   WITHHOLDING_RULES,
   applyWithholding,
   determineApplicableRule,

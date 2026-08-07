@@ -27,6 +27,13 @@ import {
 
 import { Database, createSql, type VerifiedClaims } from '../src/core/database/client.ts';
 import {
+  canTransition,
+  recordEntryPayment,
+  refundEntry,
+  settleBatch,
+  settleTransaction,
+} from '../src/core/settlement.ts';
+import {
   changesSince,
   createOption,
   disburse,
@@ -731,6 +738,208 @@ describe('persistence', { skip: url ? false : 'TEST_DATABASE_URL not set' }, () 
       assert.ok(
         result.payouts.every((p) => p.contestant_id !== trEntry1),
         'no line is addressed to an entry id instead of a person',
+      );
+    });
+  });
+
+  // =========================================================================
+  // Money actually moving
+  // =========================================================================
+
+  describe('settlement', () => {
+    const payKey = `entry-pay-${randomUUID()}`;
+    const cashKey = `cash-payout-${randomUUID()}`;
+
+    it('the state machine refuses to un-complete a payment', () => {
+      assert.equal(canTransition('pending', 'completed'), true);
+      assert.equal(canTransition('completed', 'refunded'), true);
+      assert.equal(canTransition('completed', 'pending'), false);
+      assert.equal(canTransition('refunded', 'completed'), false);
+      assert.equal(canTransition('failed', 'pending'), true, 'a retry is allowed');
+    });
+
+    it('CASH AT THE DESK: an entry payment is itemised and settles instantly', async () => {
+      const out = await db.asUser(secretaryA(), (tx) =>
+        recordEntryPayment(tx, {
+          org_id: orgA,
+          rodeo_id: rodeoA,
+          rodeo_event_id: eventA,
+          entry_id: entry1,
+          from_user_id: roper,
+          lines: [
+            { type: 'entry_fee', amount_cents: toCents(50), destination: 'purse' },
+            { type: 'stock_charge', amount_cents: toCents(25), destination: 'stock_contractor' },
+            { type: 'office_fee', amount_cents: toCents(5), destination: 'producer' },
+          ],
+          payment_method: 'cash',
+          reference: 'cash box',
+          settled: true,
+          idempotency_key: payKey,
+          actor_id: userA,
+        }),
+      );
+
+      assert.equal(out.already_recorded, false);
+      assert.equal(out.total_cents, toCents(80));
+      assert.equal(out.transaction_ids.length, 3, 'one row per fee, not one lump');
+
+      const rows = await db.asUser(secretaryA(), (tx) =>
+        tx<{ status: string; transaction_type: string }[]>`
+          select status, transaction_type from financial_transactions
+           where org_id = ${orgA} and idempotency_key like ${payKey + ':%'}
+        `,
+      );
+      assert.ok(rows.every((r) => r.status === 'completed'), 'cash is already in hand');
+      assert.ok(rows.some((r) => r.transaction_type === 'fee_office'));
+    });
+
+    it('taking the same payment twice does not charge twice', async () => {
+      const again = await db.asUser(secretaryA(), (tx) =>
+        recordEntryPayment(tx, {
+          org_id: orgA,
+          rodeo_id: rodeoA,
+          entry_id: entry1,
+          from_user_id: roper,
+          lines: [{ type: 'entry_fee', amount_cents: toCents(50), destination: 'purse' }],
+          payment_method: 'cash',
+          settled: true,
+          idempotency_key: payKey,
+          actor_id: userA,
+        }),
+      );
+      assert.equal(again.already_recorded, true);
+      assert.equal(again.total_cents, toCents(80), 'still the original three lines');
+    });
+
+    it('a scratch refunds without touching the original rows', async () => {
+      const before = await db.asUser(secretaryA(), (tx) =>
+        tx<{ n: string }[]>`
+          select count(*) as n from financial_transactions
+           where org_id = ${orgA} and entry_id = ${entry1}
+        `,
+      );
+
+      const out = await db.asUser(secretaryA(), (tx) =>
+        refundEntry(tx, {
+          org_id: orgA,
+          entry_id: entry1,
+          reason: 'scratched in time',
+          actor_id: userA,
+        }),
+      );
+      assert.equal(out.refunded_cents, toCents(80));
+      assert.equal(out.rows, 3);
+
+      const after = await db.asUser(secretaryA(), (tx) =>
+        tx<{ n: string }[]>`
+          select count(*) as n from financial_transactions
+           where org_id = ${orgA} and entry_id = ${entry1}
+        `,
+      );
+      assert.equal(
+        Number(after[0].n),
+        Number(before[0].n) + 3,
+        'refunds are new rows; the originals are untouched',
+      );
+    });
+
+    it('PAYING OUT: a whole batch settles to cash in one go', async () => {
+      const lines = [
+        { contestant_id: roper, amount_cents: toCents(300), type: 'prize', place: 1 },
+        { contestant_id: roper2, amount_cents: toCents(200), type: 'prize', place: 2 },
+      ];
+      await db.asUser(secretaryA(), (tx) =>
+        disburse(tx, orgA, rodeoA, cashKey, userA, lines),
+      );
+
+      const out = await db.asUser(secretaryA(), (tx) =>
+        settleBatch(tx, {
+          org_id: orgA,
+          idempotency_key: cashKey,
+          to_status: 'completed',
+          payment_method: 'check',
+          reference: 'checks 1041-1042',
+          actor_id: userA,
+        }),
+      );
+
+      assert.equal(out.settled, 2);
+      assert.equal(out.total_cents, toCents(500));
+
+      const events = await db.asUser(secretaryA(), (tx) =>
+        tx<{ to_status: string; reason: string }[]>`
+          select e.to_status, e.reason
+            from transaction_status_events e
+            join financial_transactions f on f.id = e.transaction_id
+           where f.idempotency_key like ${cashKey + ':%'}
+             and e.to_status = 'completed'
+        `,
+      );
+      assert.equal(events.length, 2);
+      assert.match(events[0].reason, /check/, 'how it was paid is on the record');
+    });
+
+    it('settling the same batch again is a no-op, not a double entry', async () => {
+      const out = await db.asUser(secretaryA(), (tx) =>
+        settleBatch(tx, {
+          org_id: orgA,
+          idempotency_key: cashKey,
+          to_status: 'completed',
+          payment_method: 'check',
+          actor_id: userA,
+        }),
+      );
+      assert.equal(out.settled, 0);
+      assert.equal(out.skipped, 2);
+    });
+
+    it('a completed payout cannot be walked back to pending', async () => {
+      const [txn] = await db.asUser(secretaryA(), (tx) =>
+        tx<{ id: string }[]>`
+          select id from financial_transactions
+           where org_id = ${orgA} and idempotency_key like ${cashKey + ':%'}
+           limit 1
+        `,
+      );
+
+      await assert.rejects(
+        () =>
+          db.asUser(secretaryA(), (tx) =>
+            settleTransaction(tx, {
+              org_id: orgA,
+              transaction_id: txn.id,
+              to_status: 'pending',
+              actor_id: userA,
+            }),
+          ),
+        /cannot become pending/,
+      );
+    });
+
+    it("another tenant cannot settle this org's money", async () => {
+      const [txn] = await db.asUser(secretaryA(), (tx) =>
+        tx<{ id: string }[]>`
+          select id from financial_transactions
+           where org_id = ${orgA} and idempotency_key like ${cashKey + ':%'}
+           limit 1
+        `,
+      );
+
+      await assert.rejects(
+        () =>
+          db.asUser(secretaryB(), (tx) =>
+            settleTransaction(tx, {
+              org_id: orgA,
+              transaction_id: txn.id,
+              to_status: 'refunded',
+              actor_id: userB,
+            }),
+          ),
+        // RLS hides the row entirely, so it reads as absent rather than
+        // forbidden — which is the correct answer: telling tenant B the
+        // payment exists but is not theirs would itself be a disclosure.
+        (err: unknown) =>
+          (err as { code?: string }).code === 'TRANSACTION_NOT_FOUND',
       );
     });
   });

@@ -12,6 +12,8 @@ import { TypedEventBus } from './core/events.ts';
 import { registerScoringModule } from './modules/scoring/routes.ts';
 import { registerPayoutsModule } from './modules/payouts/routes.ts';
 import { registerSyncModule } from './modules/sync/routes.ts';
+import { registerEntriesModule } from './modules/entries/routes.ts';
+import { registerDrawModule } from './modules/draw/routes.ts';
 import { registerOptionsModule } from './modules/options/routes.ts';
 import { registerPublicModule } from './modules/public/routes.ts';
 
@@ -98,6 +100,8 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     scoped.addHook('preHandler', makeAuthMiddleware(opts.verifier));
 
     await scoped.register(registerOptionsModule);
+    await scoped.register(registerEntriesModule);
+    await scoped.register(registerDrawModule);
     await scoped.register(registerScoringModule);
     await scoped.register(registerPayoutsModule);
     await scoped.register(registerSyncModule);

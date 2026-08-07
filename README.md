@@ -8,7 +8,7 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Twenty-seven defects are recorded; several
+before assuming the code is wrong.** Twenty-eight defects are recorded; several
 of them lose money or leak data.
 
 Rules were last reviewed against published sources on **8 August 2026** —
@@ -32,9 +32,9 @@ supabase/migrations/     Full schema: 29 tables, RLS, immutability triggers,
                          287 seeded options, scoring/payout/division templates
 supabase/tests/          Schema invariants, run in CI
 packages/engine/         Scoring and payout engines. Zero dependencies,
-                         no I/O, 155 tests including real-rodeo scenarios
-apps/api/                Fastify API: auth, RLS-bound persistence, typed event
-                         bus, offline sync, scoring, payouts, options, public
+                         no I/O, 208 tests including real-rodeo scenarios
+apps/api/                Fastify API: auth, RLS-bound persistence, entries,
+                         draw, scoring, payouts, settlement, sync, public
 docs/                    The model, architecture deltas, rule provenance,
                          security, roadmap
 ```
@@ -65,13 +65,13 @@ Two properties it holds:
 
 ```
 $ cd packages/engine && node --test "test/*.test.ts"
-# tests 155
-# pass 155
+# tests 208
+# pass 208
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
-# tests 32
-# pass 32
+# tests 42
+# pass 42
 # fail 0
 ```
 
@@ -153,10 +153,12 @@ triggers bind the service role too. Full reasoning in
 | Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | Complete — repositories, RLS-bound connections, 32 integration tests |
-| Stripe Connect | Not started — ledger rows are written `pending` |
-| Entry & draw routes | Not started — schema complete, no endpoints |
-| Sidepot routes | Schema and payout maths done; no repository or route |
+| API persistence | Complete — repositories, RLS-bound connections, 42 integration tests |
+| Entries | Complete — fee quoting, eligibility, turnouts, refunds |
+| Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
+| Settlement | Complete — cash, check, card; state machine over the ledger |
+| Stripe Connect | Not started — card rows sit `pending` until a processor confirms |
+| Results writer | Not started — `results` is read but nothing populates it |
 | Web app (PWA) | Not started |
 | Timer Bridge | Not started |
 
