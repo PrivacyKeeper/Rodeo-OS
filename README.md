@@ -8,7 +8,7 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Thirty-nine defects are recorded; several
+before assuming the code is wrong.** Forty defects are recorded; several
 of them lose money, leak data, or deadlock a rodeo one step from done.
 
 Rules were last reviewed against published sources on **8 August 2026** —
@@ -37,7 +37,7 @@ jackpot — with what passed, what broke, and what is still missing.
 supabase/migrations/     Full schema: 41 tables + 5 public views, RLS,
                          immutability triggers, 287 seeded options,
                          10 association profiles, templates
-supabase/tests/          30 schema invariants, run in CI
+supabase/tests/          37 schema invariants, run in CI
 packages/engine/         Scoring, payout, day sheet and books engines. Zero
                          dependencies, no I/O, 291 tests
 apps/api/                Fastify API: auth, RLS-bound persistence, setup,
@@ -80,8 +80,8 @@ $ cd packages/engine && node --test "test/*.test.ts"
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
-# tests 104
-# pass 104
+# tests 116
+# pass 116
 # fail 0
 ```
 
@@ -166,7 +166,7 @@ triggers bind the service role too. Full reasoning in
 | Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | Complete — repositories, RLS-bound connections, 104 integration tests |
+| API persistence | Complete — repositories, RLS-bound connections, 116 integration tests |
 | Entries | Complete — fee quoting, eligibility, turnouts, refunds |
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |

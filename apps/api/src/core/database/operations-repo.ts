@@ -1149,3 +1149,310 @@ async function listRodeosById(
      where r.org_id = ${orgId} and r.id = ${rodeoId}
   `;
 }
+
+// ===========================================================================
+// Results, stock and personnel — the three screens the interface still lacked
+// ===========================================================================
+
+export interface ResultDisplayRow {
+  rodeo_event_id: string;
+  event_label: string;
+  result_type: string;
+  go_round: number | null;
+  d_division: number | null;
+  place: number | null;
+  contestant_id: string;
+  contestant_name: string;
+  aggregate_score: string | null;
+  payout_amount: string;
+  points_earned: string;
+  is_official: boolean;
+}
+
+export async function loadResults(
+  tx: Tx,
+  orgId: string,
+  rodeoId: string,
+): Promise<ResultDisplayRow[]> {
+  return tx<ResultDisplayRow[]>`
+    select r.rodeo_event_id,
+           coalesce(o.label, replace(ev.event_type, '_', ' ')) as event_label,
+           r.result_type, r.go_round, r.d_division, r.place,
+           r.contestant_id,
+           trim(u.first_name || ' ' || u.last_name) as contestant_name,
+           r.aggregate_score::text as aggregate_score,
+           r.payout_amount::text as payout_amount,
+           r.points_earned::text as points_earned,
+           r.is_official
+      from results r
+      join rodeo_events ev on ev.id = r.rodeo_event_id
+      join users u on u.id = r.contestant_id
+      left join reference_options o
+             on o.domain = 'event_type' and o.code = ev.event_type
+            and (o.org_id = ${orgId} or o.org_id is null)
+     where r.org_id = ${orgId} and r.rodeo_id = ${rodeoId}
+     order by ev.sort_order, r.result_type, r.go_round nulls first,
+              r.d_division nulls first, r.place nulls last
+  `;
+}
+
+/** Publish or unpublish a whole event's placings in one action. */
+export async function setResultsOfficial(
+  tx: Tx,
+  orgId: string,
+  eventId: string,
+  official: boolean,
+): Promise<number> {
+  const rows = await tx`
+    update results set is_official = ${official}, updated_at = now()
+     where org_id = ${orgId} and rodeo_event_id = ${eventId}
+  `;
+  return rows.count;
+}
+
+// ---- Stock -----------------------------------------------------------------
+
+export interface AnimalRow {
+  id: string;
+  name: string;
+  brand_number: string | null;
+  animal_type: string;
+  breed: string | null;
+  health_status: string;
+  registry_id: string | null;
+  contractor_name: string | null;
+  /** Times drawn at this rodeo. */
+  drawn_here: number;
+}
+
+export async function listAnimals(
+  tx: Tx,
+  orgId: string,
+  rodeoId: string | null,
+): Promise<AnimalRow[]> {
+  return tx<AnimalRow[]>`
+    select a.id, a.name, a.brand_number, a.animal_type, a.breed,
+           a.health_status, a.registry_id,
+           case when c.id is null then null
+                else trim(c.first_name || ' ' || c.last_name) end as contractor_name,
+           coalesce(d.n, 0)::int as drawn_here
+      from animals a
+      left join users c on c.id = a.contractor_id
+      left join lateral (
+        select count(*) as n from stock_draws sd
+         where sd.animal_id = a.id
+           and (${rodeoId}::uuid is null or sd.rodeo_id = ${rodeoId})
+           and not sd.is_redraw
+      ) d on true
+     where a.org_id = ${orgId}
+     order by a.animal_type, a.name
+  `;
+}
+
+export interface NewAnimal {
+  name: string;
+  animal_type: string;
+  brand_number?: string | null;
+  breed?: string | null;
+  contractor_id?: string | null;
+  registry_id?: string | null;
+}
+
+export async function createAnimal(
+  tx: Tx,
+  orgId: string,
+  input: NewAnimal,
+): Promise<{ id: string; name: string }> {
+  const [row] = await tx<{ id: string; name: string }[]>`
+    insert into animals (org_id, name, animal_type, brand_number, breed,
+                         contractor_id, registry_id)
+    values (${orgId}, ${input.name}, ${input.animal_type},
+            ${input.brand_number ?? null}, ${input.breed ?? null},
+            ${input.contractor_id ?? null}, ${input.registry_id ?? null})
+    returning id, name
+  `;
+  return row;
+}
+
+export async function setAnimalHealth(
+  tx: Tx,
+  orgId: string,
+  animalId: string,
+  status: string,
+): Promise<boolean> {
+  const rows = await tx`
+    update animals set health_status = ${status}, updated_at = now()
+     where id = ${animalId} and org_id = ${orgId}
+  `;
+  return rows.count > 0;
+}
+
+// ---- Personnel -------------------------------------------------------------
+
+export interface PersonnelRow {
+  id: string;
+  user_id: string;
+  name: string;
+  role: string;
+  credential_id: string | null;
+  card_number: string | null;
+  card_expires: string | null;
+  carded: boolean;
+  confirmed_at: string | null;
+  fee_cents: string | null;
+}
+
+export async function listPersonnel(
+  tx: Tx,
+  orgId: string,
+  rodeoId: string,
+): Promise<PersonnelRow[]> {
+  return tx<PersonnelRow[]>`
+    select rp.id, rp.user_id,
+           trim(u.first_name || ' ' || u.last_name) as name,
+           rp.role, c.id as credential_id,
+           c.card_number, c.expires_on::text as card_expires,
+           coalesce(c.verified, false) as carded,
+           rp.confirmed_at::text as confirmed_at,
+           rp.fee_cents::text as fee_cents
+      from rodeo_personnel rp
+      join users u on u.id = rp.user_id
+      -- Resolved LIVE, not read from rp.credential_id. Snapshotting it at
+      -- assignment meant a card verified afterwards never showed up, and the
+      -- rodeo stayed 'short' with a carded judge standing in the arena. The
+      -- shortfall function checks credentials directly for the same reason.
+      left join lateral (
+        select cr.id, cr.card_number, cr.expires_on, cr.verified
+          from credentials cr
+          left join rodeo_sanctioning rs
+                 on rs.rodeo_id = rp.rodeo_id and rs.org_id = rp.org_id
+          left join associations a on a.id = rs.association_id
+         where cr.user_id = rp.user_id
+           and cr.role = rp.role
+           and (a.code is null or cr.body_code = a.code)
+         order by cr.verified desc, cr.expires_on desc nulls last
+         limit 1
+      ) c on true
+     where rp.org_id = ${orgId} and rp.rodeo_id = ${rodeoId}
+     order by rp.role, u.last_name, u.first_name
+  `;
+}
+
+/**
+ * Put somebody on a rodeo, attaching their card automatically.
+ *
+ * The credential is resolved here rather than asked for: a secretary assigning
+ * a judge should not have to know his card number, and a shortfall report that
+ * depends on somebody remembering to link the card is a report that will
+ * always say the rodeo is short.
+ */
+export async function assignPersonnel(
+  tx: Tx,
+  orgId: string,
+  rodeoId: string,
+  userId: string,
+  role: string,
+  feeCents: number | null,
+): Promise<PersonnelRow | null> {
+  const [row] = await tx<{ id: string }[]>`
+    insert into rodeo_personnel (org_id, rodeo_id, user_id, role, fee_cents,
+                                 credential_id)
+    values (${orgId}, ${rodeoId}, ${userId}, ${role}, ${feeCents},
+            (select c.id from credentials c
+              join rodeo_sanctioning rs
+                on rs.rodeo_id = ${rodeoId} and rs.org_id = ${orgId}
+              join associations a on a.id = rs.association_id
+             where c.user_id = ${userId}
+               and c.role = ${role}
+               and c.body_code = a.code
+               and c.verified
+             order by c.expires_on desc nulls last
+             limit 1))
+    on conflict (rodeo_id, user_id, role) do update
+       set fee_cents = excluded.fee_cents, updated_at = now()
+    returning id
+  `;
+  if (!row) return null;
+  const all = await listPersonnel(tx, orgId, rodeoId);
+  return all.find((p) => p.id === row.id) ?? null;
+}
+
+export async function removePersonnel(
+  tx: Tx,
+  orgId: string,
+  personnelId: string,
+): Promise<boolean> {
+  const rows = await tx`
+    delete from rodeo_personnel where id = ${personnelId} and org_id = ${orgId}
+  `;
+  return rows.count > 0;
+}
+
+export async function listCredentials(
+  tx: Tx,
+  userId: string,
+): Promise<
+  {
+    id: string;
+    body_code: string;
+    role: string;
+    card_number: string | null;
+    card_class: string;
+    expires_on: string | null;
+    verified: boolean;
+  }[]
+> {
+  return tx`
+    select id, body_code, role, card_number, card_class,
+           expires_on::text as expires_on, verified
+      from credentials where user_id = ${userId}
+     order by body_code, role
+  `;
+}
+
+export async function addCredential(
+  tx: Tx,
+  userId: string,
+  input: {
+    body_code: string;
+    role: string;
+    card_number?: string | null;
+    card_class?: string;
+    issued_on?: string | null;
+    expires_on?: string | null;
+  },
+): Promise<{ id: string }> {
+  const [row] = await tx<{ id: string }[]>`
+    insert into credentials (user_id, body_code, role, card_number, card_class,
+                             issued_on, expires_on, association_id)
+    values (${userId}, ${input.body_code}, ${input.role},
+            ${input.card_number ?? null}, ${input.card_class ?? 'full'},
+            ${input.issued_on ?? null}, ${input.expires_on ?? null},
+            (select id from associations
+              where code = ${input.body_code} and org_id is null limit 1))
+    returning id
+  `;
+  return row;
+}
+
+/**
+ * Mark a card as checked.
+ *
+ * Separate from adding it, on purpose. Anybody can type a number into a box;
+ * `credential_is_current()` counts only a card somebody has verified, so this
+ * is the step that makes the shortfall report mean something.
+ */
+export async function verifyCredential(
+  tx: Tx,
+  credentialId: string,
+  _actorId: string,
+): Promise<boolean> {
+  // Goes through verify_credential() rather than an UPDATE. The check —
+  // nobody verifies their own card, and the verifier must be staff somewhere
+  // that deals with the holder — lives in one function instead of being
+  // tangled into a policy's WITH CHECK clause. See delta D40.
+  const [row] = await tx<{ verify_credential: boolean }[]>`
+    select verify_credential(${credentialId})
+  `;
+  return row?.verify_credential ?? false;
+}

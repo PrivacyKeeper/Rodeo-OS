@@ -751,3 +751,146 @@ export async function loadStandings(
     })),
   };
 }
+
+/**
+ * Correct a score that is already official.
+ *
+ * The arena reverses a call more often than any software design admits: a
+ * judge's sheet turns up with 17.24 where the terminal has 17.42, a barrier
+ * flag was missed, a time was read off the wrong lane. So correcting is a
+ * first-class operation, not an admin escape hatch.
+ *
+ * Nothing here writes edit_history. The `scores_record_edits` trigger appends
+ * to it on every UPDATE, so the record is kept even when a change is made by
+ * bypassing this function entirely — which is the only way that guarantee is
+ * worth anything.
+ */
+export async function correctScore(
+  tx: Tx,
+  orgId: string,
+  scoreId: string,
+  actorId: string,
+  patch: {
+    final_time?: number | null;
+    final_score?: number | null;
+    raw_time?: number | null;
+    time_penalties?: unknown;
+    judge_scores?: unknown;
+    reason: string;
+  },
+): Promise<{ id: string; rodeo_event_id: string; status: string } | null> {
+  const [row] = await tx<{ id: string; rodeo_event_id: string; status: string }[]>`
+    update scores
+       set final_time     = ${patch.final_time ?? null},
+           final_score    = ${patch.final_score ?? null},
+           raw_time       = coalesce(${patch.raw_time ?? null}, raw_time),
+           time_penalties = coalesce(
+             ${patch.time_penalties ? tx.json(patch.time_penalties as Json) : null},
+             time_penalties),
+           judge_scores   = coalesce(
+             ${patch.judge_scores ? tx.json(patch.judge_scores as Json) : null},
+             judge_scores),
+           correction_reason = ${patch.reason},
+           last_edited_by = ${actorId},
+           updated_at     = now()
+     where id = ${scoreId}
+       and org_id = ${orgId}
+       and status in ('provisional', 'official')
+    returning id, rodeo_event_id, status
+  `;
+  return row ?? null;
+}
+
+/** Disqualify a run. The reason is not optional — the schema refuses without one. */
+export async function disqualifyScore(
+  tx: Tx,
+  orgId: string,
+  scoreId: string,
+  actorId: string,
+  reason: string,
+): Promise<{ id: string; rodeo_event_id: string; status: string } | null> {
+  const [row] = await tx<{ id: string; rodeo_event_id: string; status: string }[]>`
+    update scores
+       set status = 'dq',
+           dq_reason = ${reason},
+           -- A DQ has no placing time or score. Leaving the old value would
+           -- put a disqualified run back in the ranking the moment somebody
+           -- re-finalised the event.
+           final_time = null,
+           final_score = null,
+           last_edited_by = ${actorId},
+           updated_at = now()
+     where id = ${scoreId}
+       and org_id = ${orgId}
+       and status in ('provisional', 'official')
+    returning id, rodeo_event_id, status
+  `;
+  return row ?? null;
+}
+
+/**
+ * Award a re-ride.
+ *
+ * Marks the original 'reride', which frees the one-live-score-per-entry slot
+ * (`idx_scores_one_live_per_entry`) so the replacement run can be scored
+ * normally. The original is never deleted — it is the evidence that a re-ride
+ * was given and why.
+ */
+export async function markReride(
+  tx: Tx,
+  orgId: string,
+  scoreId: string,
+  actorId: string,
+  reason: string,
+): Promise<{ id: string; rodeo_event_id: string; entry_id: string } | null> {
+  const [row] = await tx<
+    { id: string; rodeo_event_id: string; entry_id: string }[]
+  >`
+    update scores
+       set status = 'reride',
+           reride_reason = ${reason},
+           last_edited_by = ${actorId},
+           updated_at = now()
+     where id = ${scoreId}
+       and org_id = ${orgId}
+       and status in ('provisional', 'official')
+    returning id, rodeo_event_id, entry_id
+  `;
+  return row ?? null;
+}
+
+/** Every run in an event, with its edit history, for the correction screen. */
+export async function loadScoreSheet(
+  tx: Tx,
+  orgId: string,
+  eventId: string,
+): Promise<
+  {
+    score_id: string;
+    entry_id: string;
+    contestant_id: string;
+    contestant_name: string;
+    go_round: number;
+    final_time: string | null;
+    final_score: string | null;
+    status: string;
+    dq_reason: string | null;
+    reride_reason: string | null;
+    correction_reason: string | null;
+    edit_history: unknown;
+  }[]
+> {
+  return tx`
+    select s.id as score_id, s.entry_id, s.contestant_id,
+           trim(u.first_name || ' ' || u.last_name) as contestant_name,
+           s.go_round,
+           s.final_time::text as final_time,
+           s.final_score::text as final_score,
+           s.status, s.dq_reason, s.reride_reason, s.correction_reason,
+           s.edit_history
+      from scores s
+      join users u on u.id = s.contestant_id
+     where s.org_id = ${orgId} and s.rodeo_event_id = ${eventId}
+     order by s.go_round, u.last_name, u.first_name, s.created_at
+  `;
+}

@@ -866,3 +866,51 @@ and the counts of each are returned so the operation reports what it actually
 did.
 
 `apps/api/src/core/database/desk-repo.ts`
+
+---
+
+## D40 — A secretary could not record the card of a judge she had just booked · S2
+
+The same mistake as D36, in a second place. `credentials_org_write` allowed
+staff to write a credential only for somebody with an `org_members` row in
+their organisation.
+
+A contract judge is not on your staff roster. He works four rodeos for four
+different producers in a season and is a member of none of them. So the
+committee that hires him could not record his card, `credential_is_current()`
+returned false because there was nothing to check, and `personnel_shortfall()`
+reported the rodeo one carded judge short forever — with the judge standing in
+the arena, card in his pocket.
+
+**The pattern, stated once:** any policy that treats `org_members` as the only
+way a person relates to an organisation is wrong in this schema, because the
+schema deliberately supports people with no login and no membership anywhere.
+That is now true of `users`, of `credentials`, and it is worth checking before
+writing the next policy.
+
+Three further faults surfaced underneath it:
+
+- **The read side broke the write.** `INSERT ... RETURNING` applies the SELECT
+  policy to the new row, so the insert failed with a row-level security error
+  even though its WITH CHECK passed. The write looked broken; the fault was the
+  read. Fixed with a `created_by` column so whoever wrote a card down can read
+  back the card they wrote down.
+- **An ordering trap.** Verifying required a relationship, the relationship was
+  created by assigning somebody to a rodeo, and assigning resolved the
+  credential — so a card had to be verified before the assignment that made
+  verification possible. The real workflow has no such circle: the judge hands
+  over the card and the person who writes it down is the person who saw it. The
+  recorder may now verify, and the rule that carries the weight is unchanged —
+  nobody verifies their own.
+- **The card was snapshotted at assignment.** `rodeo_personnel.credential_id`
+  was resolved once, when somebody was put on the rodeo, so a card verified
+  afterwards never appeared and the rodeo stayed "short" with a carded judge in
+  the arena. Now resolved live at read time, the same way
+  `personnel_shortfall()` already did it.
+
+**Built instead:** recording and verifying are separated. Recording is
+harmless — an unverified card counts for nothing anywhere — so any staff member
+may record one for anybody. Verifying is the act that satisfies a sanctioning
+requirement, and it stays restricted.
+
+`supabase/migrations/0024_credential_visibility.sql`

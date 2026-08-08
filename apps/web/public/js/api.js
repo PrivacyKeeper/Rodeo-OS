@@ -156,6 +156,36 @@ export const api = {
   finalize: (rodeoId, eventId, official) =>
     request('POST', `/rodeos/${rodeoId}/events/${eventId}/finalize`, { official }),
 
+  // ---- Corrections --------------------------------------------------------
+  scoreSheet: (rodeoId, eventId) =>
+    request('GET', `/rodeos/${rodeoId}/events/${eventId}/score-sheet`),
+  correctScore: (rodeoId, scoreId, body) =>
+    request('POST', `/rodeos/${rodeoId}/scores/${scoreId}/correct`, body),
+  dqScore: (rodeoId, scoreId, reason) =>
+    request('POST', `/rodeos/${rodeoId}/scores/${scoreId}/dq`, { reason }),
+  rerideScore: (rodeoId, scoreId, reason) =>
+    request('POST', `/rodeos/${rodeoId}/scores/${scoreId}/reride`, { reason }),
+
+  // ---- Results, stock, personnel -----------------------------------------
+  results: (rodeoId) => request('GET', `/rodeos/${rodeoId}/results`),
+  publishResults: (rodeoId, eventId, official = true) =>
+    request('POST', `/rodeos/${rodeoId}/events/${eventId}/publish`, { official }),
+
+  animals: (rodeoId) =>
+    request('GET', `/animals${rodeoId ? `?rodeo_id=${rodeoId}` : ''}`),
+  createAnimal: (body) => request('POST', '/animals', body),
+  setAnimalHealth: (animalId, health_status) =>
+    request('PATCH', `/animals/${animalId}`, { health_status }),
+
+  personnel: (rodeoId) => request('GET', `/rodeos/${rodeoId}/personnel`),
+  assignPersonnel: (rodeoId, body) => request('POST', `/rodeos/${rodeoId}/personnel`, body),
+  removePersonnel: (rodeoId, id) =>
+    request('DELETE', `/rodeos/${rodeoId}/personnel/${id}`),
+  credentials: (userId) => request('GET', `/people/${userId}/credentials`),
+  addCredential: (userId, body) => request('POST', `/people/${userId}/credentials`, body),
+  verifyCredential: (credentialId) =>
+    request('POST', `/credentials/${credentialId}/verify`, {}),
+
   career: (contestantId) => request('GET', `/contestants/${contestantId}/career`),
   registrySearch: (q, type) =>
     request('GET', `/registry?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`),

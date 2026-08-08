@@ -469,4 +469,150 @@ begin
     end;
 end $$;
 
+-- ============================================================================
+-- The desk: visibility for people who belong to no organisation
+-- ============================================================================
+
+-- D36. A contestant entered at the desk is not an org member and never will
+-- be. If staff cannot see them, every inner join on users drops their entry.
+do $$
+declare v_org uuid := '11111111-1111-4111-8111-111111111111';
+        v_auth uuid := '99999999-9999-4999-8999-999999999999';
+        v_staff uuid := '88888888-8888-4888-8888-888888888888';
+        n int;
+begin
+    insert into users (id, first_name, last_name, supabase_auth_id)
+    values (v_staff, 'Inv', 'Secretary', v_auth);
+    insert into org_members (org_id, user_id, role, accepted_at)
+    values (v_org, v_staff, 'secretary', now());
+
+    perform set_config('request.jwt.claims',
+        json_build_object('sub', v_auth, 'role', 'authenticated')::text, true);
+    set local role authenticated;
+
+    -- 'cccccccc-…' is the fixture contestant. They have an entry at this org
+    -- and no org_members row — exactly the shape D36 made invisible.
+    select count(*) into n from users
+     where id = 'cccccccc-1111-4111-8111-111111111111';
+    if n = 0 then
+        raise exception 'FAIL D36: a contestant with an entry here is invisible to staff';
+    end if;
+    raise notice 'PASS D36: a contestant entered here is visible without being a member';
+
+    -- And the entry itself survives the join that used to drop it.
+    select count(*) into n
+      from entries e join users u on u.id = e.contestant_id
+     where e.org_id = v_org;
+    if n = 0 then
+        raise exception 'FAIL D36: the join on users still drops the entry';
+    end if;
+    raise notice 'PASS D36: the entry survives the join that resolves the name';
+
+    reset role;
+end $$;
+
+-- D37. The global search returns names and withholds everything else.
+do $$
+declare leaked text;
+begin
+    select string_agg(p.proname, ', ') into leaked
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'search_people'
+       and pg_get_function_result(p.oid) like '%date_of_birth%';
+    if leaked is not null then
+        raise exception 'FAIL D37: search_people returns date_of_birth';
+    end if;
+    raise notice 'PASS D37: the global person search returns no contact or tax columns';
+end $$;
+
+-- D40. Nobody certifies their own card.
+do $$
+declare v_auth uuid := '99999999-9999-4999-8999-999999999999';
+        v_staff uuid := '88888888-8888-4888-8888-888888888888';
+        v_cred uuid;
+begin
+    perform set_config('request.jwt.claims',
+        json_build_object('sub', v_auth, 'role', 'authenticated')::text, true);
+    set local role authenticated;
+
+    insert into credentials (user_id, body_code, role, card_number)
+    values (v_staff, 'PRCA', 'judge', 'SELF-1')
+    returning id into v_cred;
+
+    begin
+        perform verify_credential(v_cred);
+        raise exception 'FAIL D40: a card was verified by its own holder';
+    exception when insufficient_privilege then
+        raise notice 'PASS D40: a card cannot be verified by its holder';
+    end;
+
+    reset role;
+end $$;
+
+-- A back number is one per person per rodeo, and one person per number.
+do $$
+declare v_org uuid := '11111111-1111-4111-8111-111111111111';
+        v_rodeo uuid := 'aaaaaaaa-1111-4111-8111-111111111111';
+        v_a uuid := 'cccccccc-1111-4111-8111-111111111111';
+        v_b uuid := '88888888-8888-4888-8888-888888888888';
+begin
+    insert into back_numbers (org_id, rodeo_id, contestant_id, back_number)
+    values (v_org, v_rodeo, v_a, '214');
+
+    begin
+        insert into back_numbers (org_id, rodeo_id, contestant_id, back_number)
+        values (v_org, v_rodeo, v_b, '214');
+        raise exception 'FAIL back numbers: two people share a number';
+    exception when unique_violation then
+        raise notice 'PASS back numbers: one person per number at a rodeo';
+    end;
+
+    begin
+        insert into back_numbers (org_id, rodeo_id, contestant_id, back_number)
+        values (v_org, v_rodeo, v_a, '7A');
+        raise exception 'FAIL back numbers: one person got two numbers';
+    exception when unique_violation then
+        raise notice 'PASS back numbers: one number per person at a rodeo';
+    end;
+end $$;
+
+-- A correction is recorded with its reason, and the history cannot be cleared.
+do $$
+declare v_org uuid := '11111111-1111-4111-8111-111111111111';
+        v_rodeo uuid := 'aaaaaaaa-1111-4111-8111-111111111111';
+        v_event uuid := 'bbbbbbbb-1111-4111-8111-111111111111';
+        v_entry uuid := 'dddddddd-1111-4111-8111-111111111111';
+        v_person uuid := 'cccccccc-1111-4111-8111-111111111111';
+        v_score uuid;
+        v_hist jsonb;
+begin
+    -- Round 9 rather than 1: earlier assertions in this file already left a
+    -- live score on round 1, and one live score per entry per round is itself
+    -- an invariant.
+    insert into scores (org_id, rodeo_id, rodeo_event_id, entry_id, contestant_id,
+                        go_round, final_score, status)
+    values (v_org, v_rodeo, v_event, v_entry, v_person, 9, 82.0, 'official')
+    returning id into v_score;
+
+    update scores set final_score = 84.5, correction_reason = 'Judge card misread'
+     where id = v_score;
+
+    -- Clearing the array does not clear the history: the trigger appends over
+    -- whatever the caller supplied.
+    update scores set edit_history = '[]'::jsonb, final_score = 80.0,
+                      correction_reason = 'sneaky'
+     where id = v_score;
+
+    select edit_history into v_hist from scores where id = v_score;
+    if jsonb_array_length(v_hist) < 1 then
+        raise exception 'FAIL corrections: the edit history was erasable';
+    end if;
+    if not (v_hist::text like '%Judge card misread%'
+            or v_hist::text like '%sneaky%') then
+        raise exception 'FAIL corrections: no reason recorded on the change';
+    end if;
+    raise notice 'PASS corrections: the reason is recorded and the history is not erasable';
+end $$;
+
 rollback;

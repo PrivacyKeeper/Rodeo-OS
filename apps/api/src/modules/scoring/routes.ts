@@ -273,6 +273,190 @@ export const registerScoringModule: FastifyPluginAsync = async (fastify) => {
       return reply.send({ data: score, meta: { request_id: request.id } });
     },
   );
+  /**
+   * POST .../scores/:score_id/correct
+   *
+   * A judge's sheet says something different from the terminal. This is an
+   * ordinary operation and it is on the same footing as entering the score in
+   * the first place — the difference is that the trigger records the old
+   * value, the new one, who changed it and why, and that history cannot be
+   * shortened by anybody including us.
+   */
+  fastify.post<{
+    Params: { org_id: string; rodeo_id: string; score_id: string };
+    Body: {
+      final_time?: number | null;
+      final_score?: number | null;
+      raw_time?: number | null;
+      reason: string;
+    };
+  }>(
+    '/rodeos/:rodeo_id/scores/:score_id/correct',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['reason'],
+          additionalProperties: false,
+          properties: {
+            final_time: { type: ['number', 'null'], minimum: 0, maximum: 3600 },
+            final_score: { type: ['number', 'null'], minimum: 0, maximum: 100 },
+            raw_time: { type: ['number', 'null'], minimum: 0, maximum: 3600 },
+            reason: { type: 'string', minLength: 3, maxLength: 500 },
+          },
+        },
+      },
+      preHandler: requirePermission('score.correct'),
+    },
+    async (request, reply) => {
+      const { org_id, score_id } = request.params;
+      const body = request.body;
+
+      // A run is timed XOR judged, and the schema enforces it. Sending both
+      // would be rejected by the CHECK with a message nobody can act on, so
+      // it is refused here with one they can.
+      if (body.final_time != null && body.final_score != null) {
+        return reply.status(400).send({
+          error: {
+            code: 'TIMED_XOR_JUDGED',
+            message: 'A run has a time or a score, never both.',
+          },
+          meta: { request_id: request.id },
+        });
+      }
+
+      const row = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.correctScore(tx, org_id, score_id, request.auth!.user.user_id, body),
+      );
+      if (!row) {
+        return reply.status(404).send({
+          error: {
+            code: 'SCORE_NOT_CORRECTABLE',
+            message: 'No provisional or official score with that id.',
+          },
+          meta: { request_id: request.id },
+        });
+      }
+
+      fastify.eventBus.emit('score.corrected', {
+        org_id,
+        score_id,
+        // The bus carries the shape of the change; the durable record of what
+        // it was before is in edit_history, written by the trigger.
+        field: body.final_time != null ? 'final_time' : 'final_score',
+        from: null,
+        to: body.final_time ?? body.final_score ?? null,
+        by: request.auth!.user.user_id,
+      });
+
+      return reply.send({
+        data: {
+          ...row,
+          // Said out loud, because it is the thing a secretary forgets and
+          // then wonders why the placings did not move.
+          next_step: 'Re-finalise the event so the placings and payouts follow.',
+        },
+        meta: { request_id: request.id },
+      });
+    },
+  );
+
+  /** POST .../scores/:score_id/dq */
+  fastify.post<{
+    Params: { org_id: string; rodeo_id: string; score_id: string };
+    Body: { reason: string };
+  }>(
+    '/rodeos/:rodeo_id/scores/:score_id/dq',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['reason'],
+          additionalProperties: false,
+          properties: { reason: { type: 'string', minLength: 3, maxLength: 500 } },
+        },
+      },
+      preHandler: requirePermission('score.dq'),
+    },
+    async (request, reply) => {
+      const { org_id, score_id } = request.params;
+      const row = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.disqualifyScore(tx, org_id, score_id, request.auth!.user.user_id,
+                             request.body.reason),
+      );
+      if (!row) {
+        return reply.status(404).send({
+          error: { code: 'SCORE_NOT_FOUND', message: 'No live score with that id.' },
+          meta: { request_id: request.id },
+        });
+      }
+      return reply.send({
+        data: { ...row, next_step: 'Re-finalise the event.' },
+        meta: { request_id: request.id },
+      });
+    },
+  );
+
+  /**
+   * POST .../scores/:score_id/reride
+   *
+   * Marks the original 'reride', which frees the one-live-score-per-entry slot
+   * so the replacement run can be scored normally. The original is never
+   * deleted — it is the evidence that a re-ride was given and why.
+   */
+  fastify.post<{
+    Params: { org_id: string; rodeo_id: string; score_id: string };
+    Body: { reason: string };
+  }>(
+    '/rodeos/:rodeo_id/scores/:score_id/reride',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['reason'],
+          additionalProperties: false,
+          properties: { reason: { type: 'string', minLength: 3, maxLength: 500 } },
+        },
+      },
+      preHandler: requirePermission('score.dq'),
+    },
+    async (request, reply) => {
+      const { org_id, score_id } = request.params;
+      const row = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.markReride(tx, org_id, score_id, request.auth!.user.user_id,
+                        request.body.reason),
+      );
+      if (!row) {
+        return reply.status(404).send({
+          error: { code: 'SCORE_NOT_FOUND', message: 'No live score with that id.' },
+          meta: { request_id: request.id },
+        });
+      }
+      return reply.send({
+        data: { ...row, next_step: 'Score the re-ride as a new run.' },
+        meta: { request_id: request.id },
+      });
+    },
+  );
+
+  /** GET .../events/:event_id/score-sheet — every run, with its history. */
+  fastify.get<{ Params: { org_id: string; rodeo_id: string; event_id: string } }>(
+    '/rodeos/:rodeo_id/events/:event_id/score-sheet',
+    async (request, reply) => {
+      const rows = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
+        repo.loadScoreSheet(tx, request.params.org_id, request.params.event_id),
+      );
+      return reply.send({
+        data: rows,
+        meta: {
+          request_id: request.id,
+          corrected: rows.filter(
+            (r) => Array.isArray(r.edit_history) && r.edit_history.length > 0,
+          ).length,
+        },
+      });
+    },
+  );
 };
 
 // Storage lives in core/database/repositories.ts. This module holds request
