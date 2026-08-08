@@ -43,6 +43,12 @@ const routes = [
     import('./views/books.js').then((m) => m.booksView(id))],
   [/^\/rodeo\/([0-9a-f-]{36})\/compliance$/, (id) =>
     import('./views/compliance.js').then((m) => m.complianceView(id))],
+  [/^\/rodeo\/([0-9a-f-]{36})\/grounds$/, (id) =>
+    import('./views/grounds.js').then((m) => m.groundsView(id))],
+  [/^\/rodeo\/([0-9a-f-]{36})\/waivers$/, (id) =>
+    import('./views/waivers.js').then((m) => m.waiversView(id))],
+  [/^\/year-end$/, () =>
+    import('./views/yearend.js').then((m) => m.yearEndView())],
   [/^\/settings$/, () => settingsView()],
 ];
 

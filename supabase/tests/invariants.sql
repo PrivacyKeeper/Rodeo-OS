@@ -615,4 +615,136 @@ begin
     raise notice 'PASS corrections: the reason is recorded and the history is not erasable';
 end $$;
 
+-- ---------------------------------------------------------------- D41
+-- A composite `on delete set null` must not null the tenant column, which is
+-- NOT NULL — that is what made the parent row undeletable. Written as a check
+-- over the whole catalogue rather than the four tables that were wrong, so a
+-- fifth added later is caught the day it appears.
+do $$
+declare v_bad int;
+begin
+    select count(*) into v_bad
+      from pg_constraint c
+     where c.contype = 'f'
+       and c.confdeltype = 'n'
+       and array_length(c.conkey, 1) > 1
+       -- No column list on the action...
+       and pg_get_constraintdef(c.oid) !~ 'SET NULL \('
+       -- ...while at least one referencing column is NOT NULL.
+       and exists (
+             select 1 from unnest(c.conkey) k
+               join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k
+              where a.attnotnull
+           );
+    if v_bad > 0 then
+        raise exception
+            'FAIL D41: % composite set-null foreign key(s) would null a NOT NULL column',
+            v_bad;
+    end if;
+    raise notice 'PASS D41: no composite set-null key can null a tenant column';
+end $$;
+
+-- ---------------------------------------------------------------- bookings
+-- An exclusive resource cannot be double-booked, and a resource with capacity
+-- is not silently limited to one by the same constraint.
+do $$
+declare v_org uuid := '11111111-1111-4111-8111-111111111111';
+        v_stall uuid;
+        v_field uuid;
+        v_ok boolean := false;
+begin
+    insert into bookable_resources (org_id, resource_type, name, capacity)
+    values (v_org, 'stall', 'Invariant Stall', 1) returning id into v_stall;
+    insert into bookable_resources (org_id, resource_type, name, capacity)
+    values (v_org, 'camping', 'Invariant Field', 30) returning id into v_field;
+
+    insert into bookings (org_id, resource_id, contact_name, stay)
+    values (v_org, v_stall, 'First', daterange('2026-07-01', '2026-07-04', '[)'));
+
+    begin
+        insert into bookings (org_id, resource_id, contact_name, stay)
+        values (v_org, v_stall, 'Second', daterange('2026-07-03', '2026-07-05', '[)'));
+    exception when exclusion_violation then
+        v_ok := true;
+    end;
+    if not v_ok then
+        raise exception 'FAIL bookings: the same stall was booked twice';
+    end if;
+    raise notice 'PASS bookings: an exclusive resource cannot be double-booked';
+
+    -- Touching ranges do not overlap: a stall is free the morning the last
+    -- horse leaves.
+    insert into bookings (org_id, resource_id, contact_name, stay)
+    values (v_org, v_stall, 'Third', daterange('2026-07-04', '2026-07-06', '[)'));
+    raise notice 'PASS bookings: a stay may start the day the previous one ends';
+
+    -- The field takes overlapping bookings; its limit is counted under a lock
+    -- in book_resource(), because an exclusion constraint cannot count.
+    insert into bookings (org_id, resource_id, contact_name, stay, quantity)
+    values (v_org, v_field, 'Group A', daterange('2026-07-01', '2026-07-04', '[)'), 10);
+    insert into bookings (org_id, resource_id, contact_name, stay, quantity)
+    values (v_org, v_field, 'Group B', daterange('2026-07-02', '2026-07-03', '[)'), 10);
+    raise notice 'PASS bookings: capacity above one is not forbidden by the constraint';
+end $$;
+
+-- ---------------------------------------------------------------- D43
+-- A signed waiver is evidence, so it is append-only.
+do $$
+declare v_org uuid := '11111111-1111-4111-8111-111111111111';
+        v_person uuid := 'cccccccc-1111-4111-8111-111111111111';
+        v_tpl uuid;
+        v_id uuid;
+        v_ok boolean := false;
+begin
+    insert into waiver_templates (org_id, name, waiver_type, body_text, version,
+                                  applies_to_roles, is_active)
+    values (v_org, 'Invariant Release', 'liability_release',
+            'Known text.', 1, array['contestant'], true)
+    returning id into v_tpl;
+
+    insert into signed_waivers (org_id, user_id, waiver_template_id,
+                                waiver_text_hash, waiver_version,
+                                signature_method, typed_name, signed_at,
+                                record_hash, recorded_by)
+    values (v_org, v_person, v_tpl,
+            encode(digest('Known text.', 'sha256'), 'hex'), 1,
+            'paper_on_file', 'Test Rider', now(), 'x', v_person)
+    returning id into v_id;
+
+    begin
+        update signed_waivers set typed_name = 'Somebody Else' where id = v_id;
+    exception when others then
+        v_ok := true;
+    end;
+    if not v_ok then
+        raise exception 'FAIL D43: a signed waiver was editable after the fact';
+    end if;
+    raise notice 'PASS D43: a signed waiver cannot be edited after the fact';
+end $$;
+
+-- ---------------------------------------------------------------- tax
+-- Every seeded reporting threshold names a form and a year, so no report can
+-- apply an unattributed number.
+do $$
+declare v_bad int;
+begin
+    select count(*) into v_bad
+      from tax_reporting_thresholds
+     where org_id is null
+       and (form is null or form = '' or tax_year is null);
+    if v_bad > 0 then
+        raise exception 'FAIL tax: % system threshold(s) without a form or year', v_bad;
+    end if;
+
+    if not exists (
+        select 1 from tax_reporting_thresholds
+         where org_id is null and country = 'US' and tax_year = 2026
+           and threshold_cents = 200000
+    ) then
+        raise exception
+            'FAIL tax: the 2026 US threshold is not the $2,000 figure in force';
+    end if;
+    raise notice 'PASS tax: reporting thresholds are attributed by form and year';
+end $$;
+
 rollback;

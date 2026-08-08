@@ -122,6 +122,46 @@ dependencies, no build step.
 
 ---
 
+## Done — the grounds, releases, notices and the year-end numbers
+
+The four things a producer does that are not the rodeo. None of it is
+competition, all of it is the business, and all of it was on a clipboard.
+
+**The grounds.** Stalls, RV spots, camping, pens, arena time, vendor space and
+clinic seats — bookable, priced by the producer per night or per stay, with
+availability that counts bookings OVERLAPPING the requested dates rather than
+bookings that happen to start on the first day. Stays are half-open date
+ranges, so a stall is free the morning the last horse leaves. A single stall is
+protected by a GiST exclusion constraint; a fifty-space field is counted under
+an advisory lock, because an exclusion constraint can forbid but cannot count
+(delta D44). Entry fees are the contestants' money passing through; this is the
+producer's own income, and until now the books said nothing about it.
+
+**Releases.** The document is shown on screen, in full, above the button — a
+system that hashes text the signer was never shown has built an audit trail for
+a fiction. Both hashes are computed by the database from the stored template,
+never accepted from a client. Paper releases collected at the gate can be
+recorded by the secretary holding them, permanently attributed to her.
+`verify_signed_waiver()` recomputes the evidence and distinguishes a reissued
+version from a document edited under a signature (deltas D42, D43).
+
+**Notices.** An outbox, not a mailer. Rows are written in the same transaction
+as the thing being announced, so the draw and "the draw is posted" either both
+happen or neither does — a flaky arena hotspot cannot lose one without losing
+the other. `notify_draw_posted()` is idempotent: run it after a re-draw and
+nobody is told twice. Nothing here sends anything yet; a delivery worker is the
+remaining piece.
+
+**Year-end.** Everybody a producer paid in a calendar year, against the
+threshold actually in force for that year and country — data, not a constant,
+because the US figure moved to $2,000 for 2026 and is indexed from here on
+(delta D45). Reports the gross where tax was withheld, not the net. Flags the
+people who crossed the threshold and never handed in a W-9, which is the
+January phone call this exists to generate. It files nothing and cannot: this
+database holds four digits of a tax identifier and no more, deliberately.
+
+---
+
 ## Phase 1 — Core, events, entries (weeks 1–6)
 
 - Organisation and user management, invitations, role assignment
@@ -150,11 +190,33 @@ dependencies, no build step.
 
 ## Phase 4 — Compliance and reporting
 
-- Waiver signing flow with PDF generation
+- ~~Waiver signing flow~~ — done. PDF generation still open: the signature and
+  its evidence are recorded, but there is no rendered document to hand back
 - ~~Compliance calendar~~ — done
 - Insurance certificate tracking and expiry alerts (schema done, no alerts yet)
-- 1099 / T4A-NR / PAYG generation
+- ~~1099 / T4A-NR reporting~~ — done as a report against the ledger. Generating
+  and transmitting the forms themselves is out of scope while this database
+  deliberately holds no full tax identifiers
+- PAYG summary for AU — the withholding is computed, the summary is not
 - PROCOM import and export, once the file format is obtained
+
+## Phase 5 — What is left
+
+- **Notice delivery.** The outbox is written and nothing drains it. Needs a
+  worker, a provider per channel, retry with backoff, and an unsubscribe that
+  respects the difference between "the draw is up" and marketing
+- **Supabase Auth in the UI.** A token is pasted into Settings today, which the
+  screen says plainly rather than faking a login
+- **Stripe Connect.** Parked deliberately: producers attach their own account
+  so nobody can say we charged them for anything
+- **Contestant portal.** Enter, view entries, view the draw, sign a release,
+  read the inbox that `notices` already fills
+- **Buddy groups** work in the engine and have no screen
+- **Hold expiry** is a manual sweep from the Grounds screen; it wants a
+  schedule
+- **Insurance expiry alerts** — the schema and the notice type both exist; the
+  job that connects them does not
+- **Tournament advancement** — Cheyenne-style brackets
 
 ---
 

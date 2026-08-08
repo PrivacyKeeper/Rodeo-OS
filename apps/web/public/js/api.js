@@ -189,4 +189,35 @@ export const api = {
   career: (contestantId) => request('GET', `/contestants/${contestantId}/career`),
   registrySearch: (q, type) =>
     request('GET', `/registry?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`),
+
+  // ---- Grounds: stalls, RV spots, arena time ------------------------------
+  resources: (rodeoId) =>
+    request('GET', `/resources${rodeoId ? `?rodeo_id=${rodeoId}` : ''}`),
+  createResource: (body) => request('POST', '/resources', body),
+  availability: (from, to, rodeoId) =>
+    request('GET', `/availability?from=${from}&to=${to}${rodeoId ? `&rodeo_id=${rodeoId}` : ''}`),
+  bookings: (rodeoId) =>
+    request('GET', `/bookings${rodeoId ? `?rodeo_id=${rodeoId}` : ''}`),
+  book: (body) => request('POST', '/bookings', body),
+  confirmBooking: (id, payment_reference) =>
+    request('POST', `/bookings/${id}/confirm`, { payment_reference }),
+  cancelBooking: (id, reason, refund_cents) =>
+    request('POST', `/bookings/${id}/cancel`, { reason, refund_cents }),
+  expireHolds: () => request('POST', '/bookings/expire-holds', {}),
+
+  // ---- Notices ------------------------------------------------------------
+  notices: (rodeoId) =>
+    request('GET', `/notices${rodeoId ? `?rodeo_id=${rodeoId}` : ''}`),
+  notifyDrawPosted: (rodeoId) =>
+    request('POST', `/rodeos/${rodeoId}/notices/draw-posted`, {}),
+
+  // ---- Waivers ------------------------------------------------------------
+  waiverTemplates: () => request('GET', '/waivers/templates'),
+  signWaiver: (body) => request('POST', '/waivers/sign', body),
+  verifyWaiver: (signedId) => request('GET', `/waivers/${signedId}/verify`),
+  waiverShortfall: (rodeoId) =>
+    request('GET', `/rodeos/${rodeoId}/waivers/shortfall`),
+
+  // ---- Year-end -----------------------------------------------------------
+  taxSummary: (year) => request('GET', `/tax-summary?year=${year}`),
 };

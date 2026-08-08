@@ -151,6 +151,22 @@ export async function drawView(rodeoId) {
       sections.length ? sections : h('p', { class: 'muted' }, 'No events.'),
 
       h('div', { class: 'actions noprint' },
+        // The message contestants want more than any other, and the one that
+        // currently goes out as a photo of a clipboard on a Facebook page at
+        // eleven at night. Safe to press twice: nobody is told twice.
+        h('button', {
+          onclick: async () => {
+            try {
+              const res = await api.notifyDrawPosted(rodeoId);
+              const n = res.data?.queued ?? 0;
+              toast(n === 0
+                ? 'Everybody drawn has already been told.'
+                : `Queued for ${n} contestant${n === 1 ? '' : 's'}.`);
+            } catch (err) {
+              toast(err.message, true);
+            }
+          },
+        }, 'Tell everybody the draw is up'),
         h('a', { class: 'row-link', style: 'padding:10px 16px', href: `#/rodeo/${rodeoId}/daysheet` },
           'Day sheet →'),
       ),

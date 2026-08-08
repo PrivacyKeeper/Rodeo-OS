@@ -25,6 +25,7 @@ import { registerDaySheetModule } from './modules/daysheet/routes.ts';
 import { registerBooksModule } from './modules/books/routes.ts';
 import { registerSanctionModule } from './modules/sanction/routes.ts';
 import { registerRecordModule } from './modules/record/routes.ts';
+import { registerGroundsModule } from './modules/grounds/routes.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -123,6 +124,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     await scoped.register(registerBooksModule);
     await scoped.register(registerSanctionModule);
     await scoped.register(registerRecordModule);
+    await scoped.register(registerGroundsModule);
     await scoped.register(registerScoringModule);
     await scoped.register(registerPayoutsModule);
     await scoped.register(registerSyncModule);

@@ -286,3 +286,13 @@ button[disabled] { opacity: 0.5; cursor: not-allowed; }
   .sheet tr { break-inside: avoid; }
   h2 { break-after: avoid; }
 }
+
+/* ---- Grounds, releases, year-end ---------------------------------------- */
+
+/* Right-aligned numeric column. Money and counts line up on the decimal so a
+   column of totals can be read down rather than one row at a time. */
+.sheet th.num, .sheet td.num { text-align: right; }
+
+/* A count that is a problem — unsigned releases, a missing W-9 — as opposed to
+   a count that is merely information. */
+.warnline { color: var(--warn); }

@@ -56,6 +56,18 @@ export async function listView() {
               ),
             ),
           ),
+
+      // Not per-rodeo: what was paid out across every rodeo in a calendar
+      // year, which is the only way the question is ever asked.
+      h('div', { class: 'rows', style: 'margin-top:24px' },
+        h('a', { class: 'row-link', href: '#/year-end' },
+          h('div', {},
+            h('strong', {}, 'Year-end'),
+            h('span', { class: 'muted small' },
+              'Who was paid, who crossed the reporting threshold, who owes a W-9'),
+          ),
+        ),
+      ),
     ),
   );
 }
@@ -151,6 +163,18 @@ export async function rodeoView(id) {
             ? h('span', { class: books.ready ? 'pill ok' : 'pill stop' },
                 books.ready ? 'Ready' : String(blockers))
             : null,
+        ),
+        h('a', { class: 'row-link', href: `#/rodeo/${id}/waivers` },
+          h('div', {},
+            h('strong', {}, 'Releases'),
+            h('span', { class: 'muted small' }, 'Read it, sign it, or file the paper one'),
+          ),
+        ),
+        h('a', { class: 'row-link', href: `#/rodeo/${id}/grounds` },
+          h('div', {},
+            h('strong', {}, 'Grounds'),
+            h('span', { class: 'muted small' }, 'Stalls, RV spots, camping, arena time'),
+          ),
         ),
         // Shown only when somebody sanctions this rodeo. A jackpot never sees
         // it, which is the whole design rule of the sanction layer.

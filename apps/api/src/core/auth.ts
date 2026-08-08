@@ -87,6 +87,13 @@ export const PERMISSIONS = {
   'compliance.manage': ['owner', 'admin', 'secretary'],
   'personnel.manage': ['owner', 'admin', 'secretary'],
   'registry.manage': ['owner', 'admin', 'secretary'],
+  // Stalls, RV spots and arena rental — the producer's own income, taken at
+  // the same desk by the same person as the entries.
+  'booking.manage': ['owner', 'admin', 'secretary'],
+  'notice.send': ['owner', 'admin', 'secretary'],
+  // The year-end report puts a mailing address next to a dollar total for
+  // everybody the producer paid all season. Narrower than 'financial.view'.
+  'tax.report': ['owner', 'admin'],
   'contestant.self': ['contestant'],
 } as const satisfies Record<string, readonly string[]>;
 

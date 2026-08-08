@@ -34,16 +34,17 @@ jackpot — with what passed, what broke, and what is still missing.
 ## What is here
 
 ```
-supabase/migrations/     Full schema: 41 tables + 5 public views, RLS,
-                         immutability triggers, 287 seeded options,
+supabase/migrations/     Full schema: 45 tables + 5 public views, RLS,
+                         immutability triggers, 306 seeded options,
                          10 association profiles, templates
-supabase/tests/          37 schema invariants, run in CI
+supabase/tests/          43 schema invariants, run in CI
 packages/engine/         Scoring, payout, day sheet and books engines. Zero
                          dependencies, no I/O, 291 tests
 apps/api/                Fastify API: auth, RLS-bound persistence, setup,
                          entries, draw, scoring, corrections, payouts, day
-                         sheets, books, sanctioning, the record layer, sync,
-                         and the server-rendered public pages
+                         sheets, books, sanctioning, the record layer, the
+                         grounds, releases, notices, year-end, sync, and the
+                         server-rendered public pages
 apps/web/                Secretary interface. No bundler, no dependencies,
                          no build step
 docs/                    The model, architecture deltas, rule provenance,
@@ -66,7 +67,7 @@ Two properties it holds:
   sanctioning body changing a rule mid-season is a new config row, never a
   deploy. PBR moving to tenth-point marking for 2026 was a data change.
 - **Every option is data too.** 48 event types, 34 arena roles, 25 fee types,
-  24 sanctioning bodies and eleven more domains live in `reference_options`,
+  24 sanctioning bodies and thirteen more domains live in `reference_options`,
   and a producer adds their own without a migration. A ranch rodeo running
   wild cow milking, or a playday running a keyhole race, does not need us.
 - **Money reconciles exactly.** All amounts are integer cents and every split
@@ -81,8 +82,8 @@ $ cd packages/engine && node --test "test/*.test.ts"
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
-# tests 129
-# pass 129
+# tests 161
+# pass 161
 # fail 0
 ```
 
@@ -167,7 +168,7 @@ triggers bind the service role too. Full reasoning in
 | Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | Complete — repositories, RLS-bound connections, 129 integration tests |
+| API persistence | Complete — repositories, RLS-bound connections, 161 integration tests |
 | Entries | Complete — fee quoting, eligibility, turnouts, refunds |
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |
@@ -182,7 +183,11 @@ triggers bind the service role too. Full reasoning in
 | Sanctioning | Complete — compliance calendar, credentials, welfare, discipline |
 | The record | Complete — person and animal careers spanning organisations |
 | Entry desk | Complete — global contestant search, entries, back numbers, sidepots |
-| Secretary interface | **Runs a rodeo end to end** — setup, entries, draw, day sheet, scoring, payouts, books, sanctioning |
+| Releases | Complete — the document on screen, server-computed hashes, paper releases, tamper check |
+| The grounds | Complete — stalls, RV spots, camping and arena time, with real availability |
+| Notices | Outbox complete — written in the transaction that does the thing being announced. No delivery worker yet |
+| Year-end | Complete — earnings by person against the threshold in force. Files nothing, by design |
+| Secretary interface | **Runs a rodeo end to end** — setup, entries, draw, day sheet, scoring, payouts, books, sanctioning, releases, grounds, year-end |
 | Supabase Auth in the UI | Not wired — token pasted in Settings |
 | Offline PWA | Not started |
 | Timer Bridge | Not started |

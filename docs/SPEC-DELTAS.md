@@ -914,3 +914,176 @@ may record one for anybody. Verifying is the act that satisfies a sanctioning
 requirement, and it stays restricted.
 
 `supabase/migrations/0024_credential_visibility.sql`
+
+---
+
+## D41 — A composite `on delete set null` made the parent row undeletable
+
+Tenant-scoped child rows use a composite foreign key so a row in org A cannot
+point at a parent in org B:
+
+```sql
+foreign key (org_id, buddy_group_id)
+    references buddy_groups (org_id, id) on delete set null
+```
+
+The shape is right. The action was wrong. `on delete set null` with no column
+list nulls **every** referencing column, and `org_id` is `NOT NULL`, so the
+cascade wrote a null into a NOT NULL column and the delete failed outright:
+
+```
+ERROR:  null value in column "org_id" violates not-null constraint
+CONTEXT:  UPDATE ONLY "entries" SET "org_id" = NULL, "buddy_group_id" = NULL
+```
+
+Four tables carried it. A buddy group could never be deleted once anybody had
+joined it; an animal with a welfare record on file was permanent; a rodeo where
+anybody had been fined could not be removed, including one created by mistake;
+and a rodeo with bookings against it could not be deleted at all.
+
+It survived this long because every test in the repository builds rows and
+asserts on them, and almost none of them delete a parent. Nothing was wrong
+until somebody tried to clean up.
+
+**Fixed with** the column list PostgreSQL 15 added to the referential action —
+`on delete set null (buddy_group_id)` — which nulls the pointer and leaves the
+tenant column alone. `career_runs` is deliberately left alone: both of its
+referencing columns are nullable, because a career run outlives the
+organisation that recorded it, and nulling both is correct there.
+
+The invariant is written as a check over the whole catalogue rather than over
+the four tables that were wrong, so a fifth added later fails the day it
+appears.
+
+`supabase/migrations/0026_composite_fk_set_null.sql`
+
+---
+
+## D42 — The signer could not read the release they were signing
+
+`waiver_templates_read` was `org_id is null or app_is_org_member(org_id)`.
+
+A contestant entering a rodeo is not a member of the producer's organisation.
+So the person being asked to sign the liability release **could not read it** —
+the one document in this schema whose entire legal weight rests on the signer
+having seen the text, and the signer was the only party denied the text.
+
+This is D36 and D40 for the third time. The pattern stated at D40 held again:
+any policy treating `org_members` as the only relationship a person can have
+with an organisation is wrong in a schema built for people who have no
+membership anywhere.
+
+**Built instead:** a template is readable when it is a system template, when
+you are a member, when it is active and you have an entry with that producer,
+when it is active and you are working one of their rodeos, or when you have
+already signed it and want to read back what you signed. Reading your own
+producer's release is not a key to everybody else's.
+
+`supabase/migrations/0027_waiver_signing.sql`
+
+---
+
+## D43 — The waiver flow could not record the waivers rodeos actually collect
+
+`signed_waivers_self_insert` required `user_id = app_current_user_id()`, with
+two consequences.
+
+A contestant created at the desk has no login at all, so that person could
+never have a release on file — and they are precisely the person a jackpot
+producer most needs one from. And a paper waiver signed at the gate, which is
+how the overwhelming majority are collected, could not be recorded by the
+secretary holding it.
+
+**Built instead:** `sign_waiver()`, plus a `recorded_by` column and a
+`paper_on_file` signature method.
+
+Two decisions inside it are worth stating.
+
+- **The hashes are computed by the database, from the stored template.**
+  `waiver_text_hash` is supposed to prove what the signer saw. If the client
+  computes it and sends it, it proves nothing whatsoever — it is a number the
+  signer's own browser made up. The client is never asked for a hash. That is
+  the difference between evidence and decoration, and it is the whole reason
+  0007 bothered with the columns.
+- **`recorded_by` is not optional.** Staff may record a signature for somebody
+  who cannot sign for themselves, and the row says permanently who put it
+  there. An unattributed waiver recorded by staff is worth less than no waiver
+  at all, because it looks like evidence.
+
+Two rules carry the weight: staff may never `click_to_sign` on somebody else's
+behalf — a recorded release needs a name or a signature — and a template
+belonging to another producer cannot be borrowed.
+
+`verify_signed_waiver()` recomputes both hashes, because a hash nothing ever
+checks is decoration. It distinguishes the two cases a mismatch can mean: a
+producer reissuing a new version, and a document edited under a signature that
+was already given.
+
+`supabase/migrations/0027_waiver_signing.sql`
+
+---
+
+## D44 — An exclusion constraint cannot count, and was not told what to forbid
+
+`bookings` prevents double-booking with a GiST exclusion constraint:
+
+```sql
+exclude using gist (resource_id with =, stay with &&)
+    where (status in ('held', 'confirmed', 'completed'))
+```
+
+Correct for a stall. Wrong for everything else, because it applied to **every**
+resource. A twenty-space camping field accepted exactly one booking, and the
+careful capacity counting in `book_resource()` — advisory lock and all — never
+ran, because the constraint fired first. The migration's own comment claimed
+capacity above one was "handled separately"; it was not handled at all.
+
+A test caught it. Nothing in the schema would have.
+
+**Fixed with** a denormalised `exclusive` column on `bookings`, stamped by a
+trigger from `bookable_resources.capacity = 1`, and added to the constraint's
+WHERE clause. The exclusion constraint's WHERE clause can only see the row it
+is checking, so the fact has to be on the row; it cannot join out to the
+resource.
+
+One consequence, taken deliberately: direct `INSERT` on `bookings` is revoked
+from `authenticated`. A resource with capacity above one is protected **only**
+by the counting inside `book_resource()`, so a caller who could insert straight
+into the table could oversell a camping field without ever touching the check
+that stops it. The function is `SECURITY DEFINER` and unaffected. Updates stay
+open — confirming, cancelling and expiring a hold cannot create an overlap.
+
+`supabase/migrations/0025_bookings_and_notices.sql`
+
+---
+
+## D45 — The 1099 threshold is data, because it moved
+
+The US information-reporting threshold was $600 for four decades. The One Big
+Beautiful Bill Act, signed July 2025, raised the 1099-NEC and 1099-MISC
+threshold to **$2,000 for payments made on or after 1 January 2026**, and from
+2026 it is indexed for inflation — so it will move again, quietly, most years.
+
+A constant compiled into the payout engine would have been wrong within twelve
+months, and nobody would have noticed until a producer under-reported.
+
+**Built instead:** `tax_reporting_thresholds`, keyed by country and tax year,
+seeded with the system values and overridable per producer. Every report states
+which threshold it applied and which form it belongs to, rather than leaving
+the reader to assume. Canada is seeded at zero deliberately: Regulation 105
+requires a T4A-NR for the payment, not for the payment being large.
+
+**What this does not do, and cannot:** file anything. `users` stores
+`tax_id_last4` and nothing else — there is no SSN in this database, by a
+decision made in 0001 that is worth keeping. A rodeo entry system holding tens
+of thousands of Social Security numbers is a breach waiting to be named after
+somebody. So the deliverable is the number the producer's accountant needs in
+January, including the list of people who crossed the threshold and never
+handed in a W-9.
+
+One subtlety in the query: the report sums `coalesce(gross_amount, amount)`,
+not `amount`. Where tax was withheld, `amount` is the net actually paid, and
+reporting on it would understate a non-resident's earnings by exactly the tax
+withheld from them — which is the one number a T4A-NR exists to state.
+
+`supabase/migrations/0028_tax_reporting.sql`
