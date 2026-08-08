@@ -17,6 +17,7 @@ import { registerDrawModule } from './modules/draw/routes.ts';
 import { registerOptionsModule } from './modules/options/routes.ts';
 import { registerResultsModule } from './modules/results/routes.ts';
 import { registerPublicModule } from './modules/public/routes.ts';
+import { registerPagesModule } from './modules/pages/routes.ts';
 import { registerRodeosModule } from './modules/rodeos/routes.ts';
 import { registerDeskModule } from './modules/desk/routes.ts';
 import { registerArenaModule } from './modules/arena/routes.ts';
@@ -102,6 +103,10 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
 
   // ---- Public routes: no auth ---------------------------------------------
   await app.register(registerPublicModule, { prefix: '/v1/public' });
+
+  // Server-rendered public pages. No prefix: these are the SEO surface and
+  // they have to live at readable URLs, not under /v1.
+  await app.register(registerPagesModule);
 
   // ---- Authenticated routes -----------------------------------------------
   await app.register(async (scoped) => {

@@ -41,8 +41,9 @@ supabase/tests/          37 schema invariants, run in CI
 packages/engine/         Scoring, payout, day sheet and books engines. Zero
                          dependencies, no I/O, 291 tests
 apps/api/                Fastify API: auth, RLS-bound persistence, setup,
-                         entries, draw, scoring, payouts, day sheets, books,
-                         sanctioning, the record layer, sync, public
+                         entries, draw, scoring, corrections, payouts, day
+                         sheets, books, sanctioning, the record layer, sync,
+                         and the server-rendered public pages
 apps/web/                Secretary interface. No bundler, no dependencies,
                          no build step
 docs/                    The model, architecture deltas, rule provenance,
@@ -80,8 +81,8 @@ $ cd packages/engine && node --test "test/*.test.ts"
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
-# tests 116
-# pass 116
+# tests 129
+# pass 129
 # fail 0
 ```
 
@@ -166,7 +167,7 @@ triggers bind the service role too. Full reasoning in
 | Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | Complete — repositories, RLS-bound connections, 116 integration tests |
+| API persistence | Complete — repositories, RLS-bound connections, 129 integration tests |
 | Entries | Complete — fee quoting, eligibility, turnouts, refunds |
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |
@@ -174,6 +175,7 @@ triggers bind the service role too. Full reasoning in
 | Stripe Connect | Not started — card rows sit `pending` until a processor confirms |
 | Results & standings | Complete — placings, average, D-divisions, season points |
 | Public scoreboard | Complete — name-only view, no PII reachable anonymously |
+| Public pages | Complete — server-rendered results, careers, horses, standings, JSON-LD, sitemap |
 | Day sheets | Complete — run order, stock, drags, printable plain text |
 | Close the books | Complete — blockers with fixes, filing deadline, append-only closure log |
 | Associations | Complete — 10 profiles as data; adding one is a row |

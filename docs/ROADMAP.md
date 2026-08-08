@@ -126,17 +126,20 @@ dependencies, no build step.
 
 - Organisation and user management, invitations, role assignment
 - ~~Rodeo and rodeo-event CRUD~~ — done; sanctioning approvals workflow still open
-- Online entry with fee collection via Stripe
-- Draw generation, buddy groups, stock draw
+- Online entry with fee collection via Stripe — the desk takes entries and
+  cash today; the card path waits on Stripe Connect
+- ~~Draw generation, stock draw~~ — done, with a published seed. Buddy groups
+  work in the engine and have no screen
 - Contestant portal: enter, view entries, view draw
 
 ## Phase 2 — Scoring, results, payouts in the UI (weeks 7–12)
 
-- ~~Secretary terminal: manual score entry~~ — done; correction, DQ and reride
-  still need screens
-- ~~Results calculation~~ — done; publication and standings screens still open
-- Payout calculation review screen, then disbursement
-- Public results pages with SEO
+- ~~Secretary terminal: manual score entry, correction, DQ, reride~~ — done
+- ~~Results calculation and publication~~ — done; season standings have public
+  pages but no producer-side screen
+- ~~Payout calculation review screen, then disbursement~~ — done
+- ~~Public results pages with SEO~~ — done: server-rendered, JSON-LD,
+  sitemap, robots.txt, no client JavaScript
 
 ## Phase 3 — Offline, timer, live (weeks 13–16)
 
