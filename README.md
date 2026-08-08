@@ -8,7 +8,7 @@ Built from *RodeoApps.pro OS — Complete Technical Architecture v1.0*
 (17 June 2026). Where this repository departs from that document it does so on
 purpose, and every departure is written down in
 [`docs/SPEC-DELTAS.md`](docs/SPEC-DELTAS.md) with the reason. **Read that file
-before assuming the code is wrong.** Thirty-five defects are recorded; several
+before assuming the code is wrong.** Thirty-nine defects are recorded; several
 of them lose money, leak data, or deadlock a rodeo one step from done.
 
 Rules were last reviewed against published sources on **8 August 2026** —
@@ -34,7 +34,7 @@ jackpot — with what passed, what broke, and what is still missing.
 ## What is here
 
 ```
-supabase/migrations/     Full schema: 40 tables + 5 public views, RLS,
+supabase/migrations/     Full schema: 41 tables + 5 public views, RLS,
                          immutability triggers, 287 seeded options,
                          10 association profiles, templates
 supabase/tests/          30 schema invariants, run in CI
@@ -80,8 +80,8 @@ $ cd packages/engine && node --test "test/*.test.ts"
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
-# tests 82
-# pass 82
+# tests 104
+# pass 104
 # fail 0
 ```
 
@@ -159,14 +159,14 @@ triggers bind the service role too. Full reasoning in
 
 | Area | State |
 |---|---|
-| Database schema | Complete — 40 tables, RLS, triggers, 287 seeded options |
+| Database schema | Complete — 41 tables, RLS, triggers, 287 seeded options |
 | Options layer | Complete — every dropdown is producer-extensible data |
 | Sidepots, templates, modules | Schema complete |
 | Scoring engine | Complete and tested — judged, timed, ranking, aggregate, D-format, handicap divisions |
 | Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | Complete — repositories, RLS-bound connections, 82 integration tests |
+| API persistence | Complete — repositories, RLS-bound connections, 104 integration tests |
 | Entries | Complete — fee quoting, eligibility, turnouts, refunds |
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |
@@ -179,7 +179,8 @@ triggers bind the service role too. Full reasoning in
 | Associations | Complete — 10 profiles as data; adding one is a row |
 | Sanctioning | Complete — compliance calendar, credentials, welfare, discipline |
 | The record | Complete — person and animal careers spanning organisations |
-| Secretary interface | **Usable** — setup, day sheet, scoring, books, sanctioning |
+| Entry desk | Complete — global contestant search, entries, back numbers, sidepots |
+| Secretary interface | **Runs a rodeo end to end** — setup, entries, draw, day sheet, scoring, payouts, books, sanctioning |
 | Supabase Auth in the UI | Not wired — token pasted in Settings |
 | Offline PWA | Not started |
 | Timer Bridge | Not started |

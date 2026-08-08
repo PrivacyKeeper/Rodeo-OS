@@ -760,3 +760,109 @@ the pot is exactly the noise this screen exists to avoid.
 drawn or competed. Caught by a unit test written before the behaviour was.
 
 `packages/engine/src/books/engine.ts`
+
+---
+
+## D36 — A contestant entered at the desk vanished from the day sheet · S1
+
+`users_staff_read` showed a person to org staff only when that person had an
+`org_members` row in the staff member's organisation.
+
+But `users` is deliberately global and login-less — 0001 says so in a comment:
+*"secretaries create contestant records for people who have never signed in."*
+Nothing in the entry flow creates an `org_members` row for a contestant, and
+nothing should: a roper who enters your jackpot is not a member of your staff.
+
+So the contestant was invisible to the very organisation that had just taken
+their entry. And because the day sheet, the entry list and the books all
+resolve a name with `join users`, an INNER JOIN against an invisible row
+**dropped the entry entirely**:
+
+- missing from the day sheet, so nobody calls them up
+- missing from the entry list, so nobody takes their money
+- missing from `checkBooks()`, so the books close without them
+
+Silently. No error anywhere. Every earlier integration test passed only because
+its fixtures made each contestant an org member, which a real desk never does —
+the bug was invisible until a test created a contestant the way the product
+actually creates one.
+
+**Built instead:** staff may see a person their organisation has a relationship
+with — a member, an entrant, a partner named on an entry, or somebody working
+the rodeo. Still not the global table.
+
+`supabase/migrations/0022_desk_visibility.sql`
+
+---
+
+## D37 — The desk could not find anybody it had not already met · S2
+
+The same policy made the anti-duplicate search impossible. A secretary typing
+"Roper" could not see a Casey Roper who had only ever competed at other
+producers' rodeos, so she creates a second Casey Roper — and every duplicate
+splits a career record in half. The record layer defeated at the moment the
+record is created.
+
+Opening `users` globally is not the answer, for the reason D31 already
+established: RLS is ROW level, so exposing the row to satisfy a name lookup
+also exposes email, phone, date of birth, address and `tax_id_last4`.
+
+**Built instead:** `search_people()`, SECURITY DEFINER with a deliberately
+narrow projection — id, name, city, state, and how many times they have entered
+here. Contact details only for somebody already entered at the calling
+organisation. Three limits on enumeration: the caller must be staff of the org
+they name, the query must be at least three characters, and the result is
+capped at 25. Same shape of fix as the `public_results` view, and the same
+property: one auditable place where a name crosses.
+
+`supabase/migrations/0022_desk_visibility.sql`
+
+---
+
+## D38 — Merging two duplicate people was impossible · S2
+
+`person_merges` was given a SELECT policy, an append-only trigger and an INSERT
+grant — and no INSERT policy. Under `force row level security` the absence of a
+policy is a denial, so every merge failed on its last statement, after the
+entries, scores, results and career runs had already been moved. The
+transaction rolled back so nothing corrupted, but merging simply did not work
+and the error said only *"new row violates row-level security policy"*.
+
+The grant without the policy is the tell: somebody wrote half of it.
+
+**Built instead:** an insert policy requiring the caller to record themselves as
+`merged_by` and to be staff of an organisation that deals with the surviving
+record — checked against the KEPT id, because by the time the row is written
+the entries have already moved and a check on the merged id would always be
+false.
+
+`supabase/migrations/0022_desk_visibility.sql`
+
+---
+
+## D39 — A merge collided with the constraints it had to satisfy · S2
+
+The first version of `mergePeople()` moved dependent rows with blanket UPDATEs.
+Three of them cannot work that way:
+
+- **`idx_entries_unique`** allows one live entry per (event, contestant, slot,
+  round). Both duplicates are normally entered in the SAME event — that is how
+  the duplicate gets noticed — so the update makes two identical keys and the
+  merge dies on a unique violation. `entry_slot` exists for exactly this case
+  (delta D10): a person accidentally entered twice genuinely has two entries,
+  so the moved one takes the next free slot.
+- **`partner_is_not_self`** rejects an entry whose partner is its own
+  contestant, which is what a team-roping entry naming the duplicate as partner
+  becomes after the merge. The partner is nulled rather than the merge failing:
+  the run happened, and a secretary can name the right partner afterwards.
+- **`idx_results_unique`** and the career-run equivalent collide the same way.
+  Both are DERIVED, so the merged record's colliding rows are dropped and the
+  event is re-finalised — the scores have all moved correctly, so every placing
+  recomputes.
+
+**Built instead:** entries move one at a time with a computed slot; the
+self-partner case is nulled; derived rows are superseded rather than merged;
+and the counts of each are returned so the operation reports what it actually
+did.
+
+`apps/api/src/core/database/desk-repo.ts`

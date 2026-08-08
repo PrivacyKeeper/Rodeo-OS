@@ -104,6 +104,54 @@ export const api = {
   patchCompliance: (id, itemId, patch) =>
     request('PATCH', `/rodeos/${id}/compliance/${itemId}`, patch),
 
+  // ---- Desk -------------------------------------------------------------
+  people: (q) => request('GET', `/people?q=${encodeURIComponent(q)}`),
+  createPerson: (body) => request('POST', '/people', body),
+  mergePeople: (keep_id, merge_id, reason) =>
+    request('POST', '/people/merge', { keep_id, merge_id, reason }),
+
+  entries: (rodeoId, eventId) =>
+    request('GET', `/rodeos/${rodeoId}/entries${eventId ? `?event_id=${eventId}` : ''}`),
+  patchEntry: (rodeoId, entryId, patch) =>
+    request('PATCH', `/rodeos/${rodeoId}/entries/${entryId}`, patch),
+  entryQuote: (rodeoId, eventId, params) =>
+    request('GET', `/rodeos/${rodeoId}/events/${eventId}/entry-quote?${new URLSearchParams(params)}`),
+  enter: (rodeoId, eventId, body) =>
+    request('POST', `/rodeos/${rodeoId}/events/${eventId}/entries`, body),
+  turnout: (rodeoId, entryId, body) =>
+    request('POST', `/rodeos/${rodeoId}/entries/${entryId}/turnout`, body),
+
+  backNumbers: (rodeoId) => request('GET', `/rodeos/${rodeoId}/back-numbers`),
+  assignBackNumbers: (rodeoId, start) =>
+    request('POST', `/rodeos/${rodeoId}/back-numbers/assign`, start ? { start } : {}),
+  setBackNumber: (rodeoId, contestantId, back_number) =>
+    request('PUT', `/rodeos/${rodeoId}/back-numbers/${contestantId}`, { back_number }),
+
+  sidepots: (rodeoId) => request('GET', `/rodeos/${rodeoId}/sidepots`),
+  createSidepot: (rodeoId, body) => request('POST', `/rodeos/${rodeoId}/sidepots`, body),
+  calculateSidepot: (rodeoId, sidepotId) =>
+    request('POST', `/rodeos/${rodeoId}/sidepots/${sidepotId}/calculate`, {}),
+
+  // ---- Draw ---------------------------------------------------------------
+  generateDraw: (rodeoId, eventId, body) =>
+    request('POST', `/rodeos/${rodeoId}/events/${eventId}/draw`, { ...body, commit: true }),
+  generateStockDraw: (rodeoId, eventId, body) =>
+    request('POST', `/rodeos/${rodeoId}/events/${eventId}/draw/stock`,
+      { animal_type: 'bull', ...body, commit: true }),
+
+  // ---- Payouts ------------------------------------------------------------
+  calculatePayouts: (rodeoId, eventId) =>
+    request('POST', `/rodeos/${rodeoId}/events/${eventId}/calculate-payouts`, {}),
+  disburse: (rodeoId, eventId) =>
+    request('POST', `/rodeos/${rodeoId}/payouts/disburse`, {
+      rodeo_event_id: eventId,
+      confirm: true,
+      // Idempotent by event: pressing Disburse twice pays once.
+      idempotency_key: `disburse-${eventId}`,
+    }),
+
+  createRegistryAnimal: (body) => request('POST', '/registry', body),
+
   submitScore: (eventId, body) => request('POST', `/events/${eventId}/scores`, body),
   finalize: (rodeoId, eventId, official) =>
     request('POST', `/rodeos/${rodeoId}/events/${eventId}/finalize`, { official }),

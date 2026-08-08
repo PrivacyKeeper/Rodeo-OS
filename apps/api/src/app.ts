@@ -18,6 +18,7 @@ import { registerOptionsModule } from './modules/options/routes.ts';
 import { registerResultsModule } from './modules/results/routes.ts';
 import { registerPublicModule } from './modules/public/routes.ts';
 import { registerRodeosModule } from './modules/rodeos/routes.ts';
+import { registerDeskModule } from './modules/desk/routes.ts';
 import { registerDaySheetModule } from './modules/daysheet/routes.ts';
 import { registerBooksModule } from './modules/books/routes.ts';
 import { registerSanctionModule } from './modules/sanction/routes.ts';
@@ -110,6 +111,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     await scoped.register(registerDrawModule);
     await scoped.register(registerResultsModule);
     await scoped.register(registerRodeosModule);
+    await scoped.register(registerDeskModule);
     await scoped.register(registerDaySheetModule);
     await scoped.register(registerBooksModule);
     await scoped.register(registerSanctionModule);
