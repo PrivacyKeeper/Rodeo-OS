@@ -51,11 +51,22 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          # auth.uid() is a Supabase builtin; stub it so plain Postgres can
-          # parse the RLS policies.
-          psql -h localhost -U postgres -c "create schema if not exists auth;"
-          psql -h localhost -U postgres -c \
-            "create or replace function auth.uid() returns uuid language sql stable as \$\$ select null::uuid \$\$;"
+          # bootstrap.sql, not a hand-written auth.uid() stub.
+          #
+          # This job used to stub auth.uid() by hand and nothing else, which
+          # left out the part that actually matters: `anon`, `authenticated`
+          # and `service_role` are Supabase roles that plain Postgres does not
+          # have, and only bootstrap.sql creates them. Migration 0016 is the
+          # first to `grant ... to anon`, and a grant to a role that does not
+          # exist is a hard error -- so on a clean runner this job died at
+          # 0016 and had not verified a migration since.
+          #
+          # It never showed up because the job only runs on push to main and
+          # on pull requests, and the roles persist across databases in a
+          # cluster that has been bootstrapped once. Same file as the
+          # integration job below, for the same reason.
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
+            -f supabase/local/bootstrap.sql
           for f in supabase/migrations/*.sql; do
             echo "--- $f"
             psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"

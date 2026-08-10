@@ -37,14 +37,15 @@ export async function waiversView(rodeoId) {
 
   let templates = [];
   let rows = [];
-  let meta = {};
   let openTemplate = null;
 
   async function load() {
-    templates = await api.waiverTemplates();
-    const res = await api.waiverShortfall(rodeoId);
-    rows = res.data ?? res;
-    meta = res.meta ?? {};
+    // api.request() returns `data`, not the envelope, so the counts below are
+    // derived from the rows rather than read from the server's `meta`.
+    [templates, rows] = await Promise.all([
+      api.waiverTemplates(),
+      api.waiverShortfall(rodeoId),
+    ]);
     draw();
   }
 
@@ -72,6 +73,35 @@ export async function waiversView(rodeoId) {
       });
       toast('On file.');
       load();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  /**
+   * Recompute the hashes on a release already on file.
+   *
+   * This is the button a producer presses when a claim arrives and somebody
+   * asks whether the release in the file is the release that was signed. A
+   * mismatch on the text with no version change is the case worth shouting
+   * about: the document moved under a signature.
+   */
+  async function checkEvidence(row) {
+    if (!row.signed_waiver_id) return;
+    try {
+      const v = await api.verifyWaiver(row.signed_waiver_id);
+      if (v.record_matches && v.text_matches) {
+        toast('Checks out. The text and the record both match what was signed.');
+      } else if (!v.record_matches) {
+        toast('The signature record does not match its own hash. Do not rely '
+          + 'on this one.', true);
+      } else if (v.template_changed_since) {
+        toast('The release has been reissued since this was signed. The signed '
+          + 'version is still on file and intact.', true);
+      } else {
+        toast('The release text has changed since this was signed, and no new '
+          + 'version was issued. Investigate.', true);
+      }
     } catch (err) {
       toast(err.message, true);
     }
@@ -110,11 +140,12 @@ export async function waiversView(rodeoId) {
     }
 
     const missing = rows.filter((r) => !r.signed);
+    const peopleMissing = new Set(missing.map((r) => r.contestant_id)).size;
     return h('section', { class: 'card' },
       h('h2', {}, 'Who has signed'),
-      h('p', { class: meta.missing > 0 ? 'muted small warnline' : 'muted small' },
-        meta.missing > 0
-          ? `${meta.people_missing} contestant(s) still owe ${meta.missing} release(s).`
+      h('p', { class: missing.length > 0 ? 'muted small warnline' : 'muted small' },
+        missing.length > 0
+          ? `${peopleMissing} contestant(s) still owe ${missing.length} release(s).`
           : 'Everybody entered has signed everything required.'),
       h('table', { class: 'sheet' },
         h('thead', {}, h('tr', {},
@@ -134,7 +165,13 @@ export async function waiversView(rodeoId) {
             h('td', {}, r.signed
               ? h('span', { class: 'pill ok' }, 'On file')
               : h('span', { class: 'pill stop' }, 'Missing')),
-            h('td', {}, r.signed ? null : h('div', { class: 'actions', style: 'gap:6px' },
+            h('td', {}, r.signed
+              ? h('div', { class: 'actions', style: 'gap:6px' },
+                  h('button', {
+                    class: 'small ghost',
+                    onclick: () => checkEvidence(r),
+                  }, 'Check it'))
+              : h('div', { class: 'actions', style: 'gap:6px' },
               h('button', {
                 class: 'small',
                 onclick: () => { openTemplate = r.template_id; draw(); },

@@ -82,8 +82,8 @@ $ cd packages/engine && node --test "test/*.test.ts"
 # fail 0
 
 $ cd apps/api && TEST_DATABASE_URL=... node --test "test/*.test.ts"
-# tests 161
-# pass 161
+# tests 168
+# pass 168
 # fail 0
 ```
 
@@ -168,7 +168,7 @@ triggers bind the service role too. Full reasoning in
 | Team events | Complete — team roping "a-Man", ranch rodeo split (delta D27) |
 | Payout engine | Complete and tested — fees, ties, ground money, multi-round, IPRA, day money, stock contractor, PESI, withholding |
 | API contracts | Routes, validation schemas, auth, event bus, sync resolution |
-| API persistence | Complete — repositories, RLS-bound connections, 161 integration tests |
+| API persistence | Complete — repositories, RLS-bound connections, 168 integration tests |
 | Entries | Complete — fee quoting, eligibility, turnouts, refunds |
 | Draw | Complete — seeded and reproducible, buddy groups, stock draw, re-draw |
 | Settlement | Complete — cash, check, card; state machine over the ledger |

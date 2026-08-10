@@ -157,8 +157,8 @@ export async function drawView(rodeoId) {
         h('button', {
           onclick: async () => {
             try {
-              const res = await api.notifyDrawPosted(rodeoId);
-              const n = res.data?.queued ?? 0;
+              // request() unwraps the envelope, so this is the data object.
+              const { queued: n } = await api.notifyDrawPosted(rodeoId);
               toast(n === 0
                 ? 'Everybody drawn has already been told.'
                 : `Queued for ${n} contestant${n === 1 ? '' : 's'}.`);

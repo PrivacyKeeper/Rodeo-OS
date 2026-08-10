@@ -61,10 +61,8 @@ export async function groundsView(rodeoId) {
   let from = rodeo.start_date;
   let to = nextDay(rodeo.end_date);
 
-  let resources = [];
   let avail = [];
   let bookings = [];
-  let meta = {};
 
   function nextDay(iso) {
     const d = new Date(`${iso}T00:00:00Z`);
@@ -73,14 +71,14 @@ export async function groundsView(rodeoId) {
   }
 
   async function load() {
-    resources = await api.resources(rodeoId);
-    const [a, b] = await Promise.all([
+    // api.request() unwraps the response envelope and returns `data`, so the
+    // server's `meta` counts never arrive here. Everything shown below is
+    // derived from the rows instead — which is the house pattern, and means
+    // one fewer thing that can disagree with what is on screen.
+    [avail, bookings] = await Promise.all([
       api.availability(from, to, rodeoId),
       api.bookings(rodeoId),
     ]);
-    avail = a;
-    bookings = b.data ?? b;
-    meta = b.meta ?? {};
     draw();
   }
 
@@ -128,8 +126,8 @@ export async function groundsView(rodeoId) {
 
   async function sweep() {
     try {
-      const res = await api.expireHolds();
-      const n = res.meta?.released ?? (res.data ?? res).length;
+      const released = await api.expireHolds();
+      const n = released.length;
       toast(n === 0 ? 'No holds had expired.' : `Released ${n} expired hold(s).`);
       load();
     } catch (err) {
@@ -213,11 +211,15 @@ export async function groundsView(rodeoId) {
   }
 
   function bookingsPanel() {
-    const owed = meta.owed_cents ?? 0;
+    const live = bookings.filter(
+      (b) => b.status === 'held' || b.status === 'confirmed',
+    );
+    const unpaid = live.filter((b) => !b.paid);
+    const owed = unpaid.reduce((sum, b) => sum + b.amount_cents, 0);
     return h('section', { class: 'card' },
       h('h2', {}, 'Bookings'),
       h('p', { class: 'muted small' },
-        `${meta.live ?? 0} live · ${meta.unpaid ?? 0} unpaid`,
+        `${live.length} live · ${unpaid.length} unpaid`,
         owed > 0 ? ` · ${money(owed)} outstanding` : ''),
       bookings.length === 0
         ? h('p', { class: 'muted small' }, 'Nobody has booked anything yet.')

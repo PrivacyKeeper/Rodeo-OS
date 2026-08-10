@@ -204,7 +204,8 @@ database holds four digits of a tax identifier and no more, deliberately.
 
 - **Notice delivery.** The outbox is written and nothing drains it. Needs a
   worker, a provider per channel, retry with backoff, and an unsubscribe that
-  respects the difference between "the draw is up" and marketing
+  respects the difference between "the draw is up" and marketing. `GET
+  /notices` returns the sent log and no screen shows it yet
 - **Supabase Auth in the UI.** A token is pasted into Settings today, which the
   screen says plainly rather than faking a login
 - **Stripe Connect.** Parked deliberately: producers attach their own account

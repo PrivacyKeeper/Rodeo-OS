@@ -17,6 +17,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
+import { buildApp } from '../src/app.ts';
 import { Database, createSql, type VerifiedClaims } from '../src/core/database/client.ts';
 import * as grounds from '../src/core/database/grounds-repo.ts';
 
@@ -648,6 +649,31 @@ describe('grounds', { skip: url ? false : 'TEST_DATABASE_URL not set' }, () => {
       });
     });
 
+    it('hands back an id the evidence check can actually use', async () => {
+      // 0027 built verify_signed_waiver() and 0027's shortfall returned only a
+      // boolean, so the check could not be reached from the one screen that
+      // lists signed releases. The id closes that loop, and this asserts the
+      // round trip rather than the column's existence.
+      const rows = await db.asUser(asSecA(), (tx) =>
+        grounds.waiverShortfall(tx, orgA, rodeoA),
+      );
+      const onFile = rows.filter((r) => r.signed);
+      assert.ok(onFile.length > 0);
+      for (const r of onFile) {
+        assert.ok(r.signed_waiver_id, 'a signed row must carry its id');
+        assert.ok(r.signed_at, 'and when it was signed');
+      }
+      // Unsigned rows carry null, so `signed` and the id can never disagree.
+      for (const r of rows.filter((x) => !x.signed)) {
+        assert.equal(r.signed_waiver_id, null);
+      }
+
+      const v = await db.asUser(asSecA(), (tx) =>
+        grounds.verifySignedWaiver(tx, onFile[0].signed_waiver_id!),
+      );
+      assert.equal(v.record_matches, true);
+    });
+
     it('will not run the shortfall for another producer', async () => {
       await assert.rejects(
         () => db.asUser(asSecB(), (tx) => grounds.waiverShortfall(tx, orgA, rodeoA)),
@@ -767,6 +793,161 @@ describe('grounds', { skip: url ? false : 'TEST_DATABASE_URL not set' }, () => {
         () => db.asUser(asRoper(), (tx) => grounds.taxYearSummary(tx, orgA, 2026)),
         /not authorised/,
       );
+    });
+  });
+
+  // =======================================================================
+  // HTTP status mapping
+  //
+  // These go through the real Fastify app rather than the repository, because
+  // the thing being asserted is what the person at the desk SEES. Every rule
+  // in this module lives in a SECURITY DEFINER function that raises with an
+  // errcode; without the mapping in the routes module they all arrive as 500,
+  // and the error handler replaces the message with "An unexpected error
+  // occurred." A secretary told she may not click-to-sign on somebody else's
+  // behalf can fix that in three seconds. A secretary told the server broke
+  // rings somebody.
+  // =======================================================================
+
+  describe('http status mapping', () => {
+    let app: Awaited<ReturnType<typeof buildApp>>;
+    const base = () => `/v1/orgs/${orgA}`;
+    const headers = { authorization: 'Bearer test' };
+
+    before(async () => {
+      app = await buildApp({
+        db,
+        logger: false,
+        verifier: {
+          verify: async () => ({
+            sub: authA,
+            exp: 9e9,
+            iat: 0,
+            email: 'sue@example.com',
+            app_metadata: {
+              user_id: secA,
+              org_memberships: [{ org_id: orgA, role: 'owner', permissions: [] }],
+            },
+          }),
+        } as never,
+      });
+    });
+
+    after(async () => {
+      if (app) await app.close();
+    });
+
+    it('403 from the middleware when the caller is not in that org at all', async () => {
+      // Never reaches the database. Worth pinning: it is the cheap check and
+      // it must stay in front of the expensive one.
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/orgs/${orgB}/waivers/sign`,
+        headers,
+        payload: {
+          template_id: tplB,
+          user_id: roper,
+          method: 'paper_on_file',
+          typed_name: 'Casey Roper',
+        },
+      });
+      assert.equal(res.statusCode, 403);
+      assert.equal(JSON.parse(res.body).error.code, 'NOT_A_MEMBER');
+    });
+
+    it('403, not 500, when the database is the one refusing', async () => {
+      // The caller IS staff of org A and posts to org A, so the middleware
+      // waves it through — and sign_waiver() raises 42501 because the template
+      // belongs to somebody else. This is the path the mapping exists for.
+      const res = await app.inject({
+        method: 'POST',
+        url: `${base()}/waivers/sign`,
+        headers,
+        payload: {
+          template_id: tplB,
+          user_id: roper,
+          method: 'paper_on_file',
+          typed_name: 'Casey Roper',
+        },
+      });
+      assert.equal(res.statusCode, 403);
+      const body = JSON.parse(res.body);
+      assert.equal(body.error.code, 'FORBIDDEN');
+      assert.match(body.error.message, /belongs to another organisation/);
+    });
+
+    it('404, not 500, when the thing does not exist', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `${base()}/waivers/${randomUUID()}/verify`,
+        headers,
+      });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('400 with the reason, not a generic 500, when a rule is broken', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `${base()}/waivers/sign`,
+        headers,
+        payload: { template_id: tplA, user_id: walkup, method: 'click_to_sign' },
+      });
+      assert.equal(res.statusCode, 400);
+      const body = JSON.parse(res.body);
+      // The function's own wording has to survive to the screen.
+      assert.match(body.error.message, /needs a name or a signature/);
+    });
+
+    it('409 when the stall is already taken', async () => {
+      const resource = randomUUID();
+      await db.asService('status mapping fixture', (tx) => tx`
+        insert into bookable_resources (id, org_id, resource_type, name, capacity)
+        values (${resource}, ${orgA}, 'stall', 'Status Stall', 1)
+      `);
+      const take = () => app.inject({
+        method: 'POST',
+        url: `${base()}/bookings`,
+        headers,
+        payload: {
+          resource_id: resource,
+          from: '2027-03-01',
+          to: '2027-03-04',
+          contact_name: 'First',
+        },
+      });
+      assert.equal((await take()).statusCode, 201);
+      const second = await take();
+      assert.equal(second.statusCode, 409);
+      assert.equal(JSON.parse(second.body).error.code, 'ALREADY_BOOKED');
+    });
+
+    it('403 when a contestant asks for the year-end report', async () => {
+      // requirePermission stops this before the database does — 'tax.report'
+      // is owner and admin only, and a secretary is neither.
+      const secretaryApp = await buildApp({
+        db,
+        logger: false,
+        verifier: {
+          verify: async () => ({
+            sub: authA,
+            exp: 9e9,
+            iat: 0,
+            app_metadata: {
+              user_id: secA,
+              org_memberships: [
+                { org_id: orgA, role: 'secretary', permissions: [] },
+              ],
+            },
+          }),
+        } as never,
+      });
+      const res = await secretaryApp.inject({
+        method: 'GET',
+        url: `${base()}/tax-summary?year=2026`,
+        headers,
+      });
+      assert.equal(res.statusCode, 403);
+      await secretaryApp.close();
     });
   });
 });

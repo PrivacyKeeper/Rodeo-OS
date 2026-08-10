@@ -26,19 +26,19 @@ export async function yearEndView() {
   // Default to last year: this screen is opened in January.
   let year = new Date().getUTCFullYear() - 1;
   let rows = [];
-  let meta = {};
   let error = null;
 
   async function load() {
     error = null;
     try {
-      const res = await api.taxSummary(year);
-      rows = res.data ?? res;
-      meta = res.meta ?? {};
+      // api.request() returns `data`, not the envelope. The form and the
+      // threshold are on every row because tax_year_summary() puts them
+      // there — which is the right place for them anyway: they are part of
+      // the answer, not commentary about it.
+      rows = await api.taxSummary(year);
     } catch (err) {
       error = err.message;
       rows = [];
-      meta = {};
     }
     draw();
   }
@@ -91,10 +91,10 @@ export async function yearEndView() {
             ? h('button', { class: 'small', onclick: csv }, 'Copy for spreadsheet')
             : null,
         ),
-        meta.threshold_cents !== null && meta.threshold_cents !== undefined
+        rows.length > 0
           ? h('p', { class: 'muted small' },
-              `${meta.form ?? 'Form'} · threshold ${money(meta.threshold_cents)} `
-              + `for ${meta.year}`)
+              `${rows[0].form} · threshold ${money(rows[0].threshold_cents)} `
+              + `for ${year}`)
           : null,
       ),
 
@@ -150,8 +150,10 @@ export async function yearEndView() {
       rows.length > 0
         ? h('section', { class: 'card' },
             h('h3', {}, 'Before you file'),
-            h('p', { class: 'muted small' }, meta.advisory
-              ?? 'Reporting figures only. This system files nothing.'))
+            h('p', { class: 'muted small' },
+              'Reporting figures only. This system holds no full tax '
+              + 'identifiers and files nothing. Confirm the threshold in '
+              + 'force for the year with your accountant before filing.'))
         : null,
     ));
   }

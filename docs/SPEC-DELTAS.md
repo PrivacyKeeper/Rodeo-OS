@@ -1087,3 +1087,53 @@ reporting on it would understate a non-resident's earnings by exactly the tax
 withheld from them — which is the one number a T4A-NR exists to state.
 
 `supabase/migrations/0028_tax_reporting.sql`
+
+---
+
+## D46 — Three faults found by auditing the work rather than reading it
+
+Written down because all three were invisible to the checks that were already
+passing, and the pattern is worth keeping.
+
+**The CI job that verified migrations had not verified one since 0016.** The
+`migrations` job stubbed `auth.uid()` by hand and stopped there, but the part
+that matters is that `anon`, `authenticated` and `service_role` are Supabase
+roles that plain Postgres does not have — and only `bootstrap.sql` creates
+them. Migration 0016 is the first to `grant ... to anon`, and a grant to a role
+that does not exist is a hard error. On a clean runner the job died at 0016.
+
+It hid because Postgres roles are cluster-wide, not per-database: any cluster
+that had been bootstrapped once kept the roles forever, so every local check
+passed. Proving it required a genuinely fresh cluster. The job now runs
+`bootstrap.sql`, the same file the integration job already used.
+
+**Every deliberate database error reached the client as HTTP 500.** The rules
+in the grounds module live in `SECURITY DEFINER` functions and `raise exception
+... using errcode`, with messages written for the person at the desk. Nothing
+mapped those SQLSTATEs to a status, so Fastify treated them as 500 and the
+error handler replaced the message with "An unexpected error occurred." A
+secretary told she may not click-to-sign on somebody else's behalf fixes it in
+three seconds; a secretary told the server broke rings somebody.
+
+Only the codes those functions raise on purpose are mapped — 42501, P0002,
+23514, 22007, 23P01. Anything else stays a 500, because an unexpected `23505`
+is a bug and its message may name a constraint the caller has no business
+seeing.
+
+**The web client never sees `meta`.** `api.request()` returns `payload.data`,
+not the envelope, so three new screens read counts off a `meta` object that was
+always `{}` — live bookings, amount outstanding, contestants missing a release,
+the reporting threshold, all silently blank or zero. Typecheck cannot catch it
+(the web app is untyped JavaScript by design) and no test rendered a view.
+
+Fixed by deriving every count from the rows, which is the existing house
+pattern and means the number on screen cannot disagree with the table under it.
+The threshold and form were already on every row because `tax_year_summary()`
+returns them there — the right place for them, since they are part of the
+answer rather than commentary about it.
+
+**What the three have in common:** each sat behind a green check. The
+migrations were verified against a dirty cluster, the routes were verified by
+typecheck rather than by being called, and the views were verified by
+`node --check` rather than by being rendered. A passing check on the wrong
+thing is worse than no check, because it stops anybody looking.

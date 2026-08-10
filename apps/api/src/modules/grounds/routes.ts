@@ -25,6 +25,54 @@ import * as grounds from '../../core/database/grounds-repo.ts';
 
 const ISO_DATE = '^\\d{4}-\\d{2}-\\d{2}$';
 
+/**
+ * Turn a deliberate database error into the right HTTP status.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS
+ * ---------------------------------------------------------------------------
+ * Most of the rules in this module live in `SECURITY DEFINER` functions,
+ * because that is the only place they can be enforced once — `sign_waiver()`
+ * hashing the stored template, `book_resource()` counting capacity under a
+ * lock. Those functions `raise exception ... using errcode`, with messages
+ * written for the person at the desk.
+ *
+ * Without this, every one of them arrived at the error handler with no
+ * `statusCode`, was treated as a 500, and the handler replaced the message
+ * with "An unexpected error occurred." — which is both wrong and useless. A
+ * secretary told she may not click-to-sign on somebody else's behalf can fix
+ * that in three seconds; a secretary told the server broke rings somebody.
+ *
+ * Only the codes these functions raise on purpose are mapped. Anything else
+ * stays a 500, because an unexpected `23505` is a bug and its message may name
+ * a constraint the caller has no business seeing.
+ */
+const SQLSTATE_STATUS: Record<string, { status: number; code: string }> = {
+  // raise ... using errcode = '42501' — every "not authorised" in 0025/0027/0028.
+  42501: { status: 403, code: 'FORBIDDEN' },
+  // 'no such resource', 'no such waiver template', 'rodeo not found'.
+  P0002: { status: 404, code: 'NOT_FOUND' },
+  // A rule the caller broke: a click-to-sign for somebody else, an inactive
+  // template, a camping field with nothing left.
+  23514: { status: 400, code: 'NOT_ALLOWED' },
+  // 'a stay must end after it starts'.
+  22007: { status: 400, code: 'BAD_DATE_RANGE' },
+  // The exclusion constraint. Somebody already has that stall.
+  '23P01': { status: 409, code: 'ALREADY_BOOKED' },
+};
+
+function asHttpError(err: unknown): never {
+  const e = err as Error & { code?: string; statusCode?: number };
+  const mapped = e.code ? SQLSTATE_STATUS[e.code] : undefined;
+  if (mapped) {
+    e.statusCode = mapped.status;
+    // The handler only suppresses the message at 500 and above, so the
+    // function's own wording reaches the screen.
+    e.code = mapped.code;
+  }
+  throw e;
+}
+
 export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
   // =========================================================================
   // Resources and availability
@@ -193,24 +241,11 @@ export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      try {
-        const row = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
-          grounds.bookResource(tx, request.params.org_id, body),
-        );
-        return reply.status(201).send({ data: row, meta: { request_id: request.id } });
-      } catch (err) {
-        const code = (err as { code?: string }).code;
-        if (code === '23P01' || code === '23514') {
-          return reply.status(409).send({
-            error: {
-              code: 'ALREADY_BOOKED',
-              message: (err as Error).message,
-            },
-            meta: { request_id: request.id },
-          });
-        }
-        throw err;
-      }
+      const row = await fastify.db
+        .asUser(claimsFor(request.auth!), (tx) =>
+          grounds.bookResource(tx, request.params.org_id, body))
+        .catch(asHttpError);
+      return reply.status(201).send({ data: row, meta: { request_id: request.id } });
     },
   );
 
@@ -375,9 +410,10 @@ export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
       preHandler: requirePermission('notice.send'),
     },
     async (request, reply) => {
-      const id = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
-        grounds.queueNotice(tx, request.params.org_id, request.body),
-      );
+      const id = await fastify.db
+        .asUser(claimsFor(request.auth!), (tx) =>
+          grounds.queueNotice(tx, request.params.org_id, request.body))
+        .catch(asHttpError);
       return reply.status(201).send({
         data: { id },
         meta: { request_id: request.id },
@@ -396,9 +432,10 @@ export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
     '/rodeos/:rodeo_id/notices/draw-posted',
     { preHandler: requirePermission('notice.send') },
     async (request, reply) => {
-      const count = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
-        grounds.notifyDrawPosted(tx, request.params.org_id, request.params.rodeo_id),
-      );
+      const count = await fastify.db
+        .asUser(claimsFor(request.auth!), (tx) =>
+          grounds.notifyDrawPosted(tx, request.params.org_id, request.params.rodeo_id))
+        .catch(asHttpError);
       return reply.send({
         data: { queued: count },
         meta: { request_id: request.id },
@@ -471,15 +508,16 @@ export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
       preHandler: requirePermission('waiver.manage'),
     },
     async (request, reply) => {
-      const row = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
-        grounds.signWaiver(tx, request.params.org_id, {
-          ...request.body,
-          // Taken from the connection, never from the body. A client-supplied
-          // IP address in an evidence record is worse than no IP address.
-          ip: request.ip,
-          user_agent: request.headers['user-agent'] ?? null,
-        }),
-      );
+      const row = await fastify.db
+        .asUser(claimsFor(request.auth!), (tx) =>
+          grounds.signWaiver(tx, request.params.org_id, {
+            ...request.body,
+            // Taken from the connection, never from the body. A client-supplied
+            // IP address in an evidence record is worse than no IP address.
+            ip: request.ip,
+            user_agent: request.headers['user-agent'] ?? null,
+          }))
+        .catch(asHttpError);
       return reply.status(201).send({ data: row, meta: { request_id: request.id } });
     },
   );
@@ -488,9 +526,10 @@ export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { org_id: string; signed_id: string } }>(
     '/waivers/:signed_id/verify',
     async (request, reply) => {
-      const row = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
-        grounds.verifySignedWaiver(tx, request.params.signed_id),
-      );
+      const row = await fastify.db
+        .asUser(claimsFor(request.auth!), (tx) =>
+          grounds.verifySignedWaiver(tx, request.params.signed_id))
+        .catch(asHttpError);
       return reply.send({
         data: row,
         meta: {
@@ -509,9 +548,10 @@ export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
     '/rodeos/:rodeo_id/waivers/shortfall',
     { preHandler: requirePermission('waiver.manage') },
     async (request, reply) => {
-      const rows = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
-        grounds.waiverShortfall(tx, request.params.org_id, request.params.rodeo_id),
-      );
+      const rows = await fastify.db
+        .asUser(claimsFor(request.auth!), (tx) =>
+          grounds.waiverShortfall(tx, request.params.org_id, request.params.rodeo_id))
+        .catch(asHttpError);
       const missing = rows.filter((r) => !r.signed);
       return reply.send({
         data: rows,
@@ -558,9 +598,10 @@ export const registerGroundsModule: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const year = request.query.year ?? new Date().getUTCFullYear() - 1;
-      const rows = await fastify.db.asUser(claimsFor(request.auth!), (tx) =>
-        grounds.taxYearSummary(tx, request.params.org_id, year, request.query.country),
-      );
+      const rows = await fastify.db
+        .asUser(claimsFor(request.auth!), (tx) =>
+          grounds.taxYearSummary(tx, request.params.org_id, year, request.query.country))
+        .catch(asHttpError);
       const reportable = rows.filter((r) => r.reportable);
       return reply.send({
         data: rows,

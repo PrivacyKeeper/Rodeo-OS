@@ -481,6 +481,9 @@ export interface WaiverShortfallRow {
   template_name: string;
   waiver_type: string;
   signed: boolean;
+  /** Null when nothing is on file. What `verify_signed_waiver()` needs. */
+  signed_waiver_id: string | null;
+  signed_at: string | null;
 }
 
 export async function waiverShortfall(
@@ -489,7 +492,9 @@ export async function waiverShortfall(
   rodeoId: string,
 ): Promise<WaiverShortfallRow[]> {
   return tx<WaiverShortfallRow[]>`
-    select * from waiver_shortfall(${orgId}, ${rodeoId})
+    select contestant_id, first_name, last_name, template_id, template_name,
+           waiver_type, signed, signed_waiver_id, signed_at::text as signed_at
+      from waiver_shortfall(${orgId}, ${rodeoId})
   `;
 }
 
