@@ -20,6 +20,22 @@ jobs:
         working-directory: packages/engine
         run: node --test "test/*.test.ts"
 
+  web:
+    name: Secretary interface renders
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # No install: this app has no dependencies, and neither does its test.
+      # It renders each view against a stub document and asserts on the text
+      # that came out, because `node --check` parses a file without running it
+      # and there is no type checker over untyped browser JavaScript. See D46.
+      - name: Render the views
+        working-directory: apps/web
+        run: node test/views.test.mjs
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

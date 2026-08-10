@@ -46,7 +46,7 @@ apps/api/                Fastify API: auth, RLS-bound persistence, setup,
                          grounds, releases, notices, year-end, sync, and the
                          server-rendered public pages
 apps/web/                Secretary interface. No bundler, no dependencies,
-                         no build step
+                         no build step. Views render against a stub DOM in CI
 docs/                    The model, architecture deltas, rule provenance,
                          security, roadmap
 ```
