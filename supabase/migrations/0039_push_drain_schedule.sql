@@ -19,13 +19,10 @@
 -- true when the queue is empty, which it is almost always: the function checks
 -- before it calls, so the steady-state cost is one cheap count.
 --
--- TO TURN IT ON, once PUSH_WORKER_SECRET is set under Edge Functions → Secrets,
--- store the SAME value in Vault so the caller can present it:
---
---   select vault.create_secret('<the same value>', 'push_worker_secret',
---                              'Shared secret for the send-push worker');
---
--- Check it with `select * from public.push_worker_status();`.
+-- NOTHING TO TURN ON. Migration 0040 generates the worker secret in the
+-- database and keeps it in Vault, so this schedule and `send-push` share it
+-- without anybody pasting a value anywhere. Check it with
+-- `select * from public.push_worker_status();`.
 --
 -- TO TURN IT OFF:  select cron.unschedule('drain-push-outbox');
 

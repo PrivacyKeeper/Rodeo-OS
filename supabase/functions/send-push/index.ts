@@ -8,10 +8,18 @@
  *
  * AUTHENTICATION. `verify_jwt` is false because the caller is a cron schedule,
  * not a person — but the function is NOT open. It requires a shared secret in
- * `x-worker-secret` matching PUSH_WORKER_SECRET. Without that env var set the
- * function refuses every request rather than defaulting to open, which is the
- * failure mode that matters: an open endpoint that sends notifications to real
- * people is a spam relay with our sending identity on it.
+ * `x-worker-secret`, and if the secret is missing it refuses every request
+ * rather than defaulting to open. That is the failure mode that matters: an
+ * open endpoint that sends notifications to real people is a spam relay with
+ * our sending identity on it.
+ *
+ * THE SECRET LIVES IN VAULT, NOT IN AN ENV VAR. It is generated in the
+ * database and read by nobody: the pg_cron schedule pulls it from Vault to
+ * make the call, and this function hands what it was given straight back to
+ * Postgres to be checked. So it is never on the wire in either direction, and
+ * there is no second copy in a dashboard field to drift out of sync with the
+ * caller — a mismatch there would 401 forever with both halves looking
+ * correct. Rotating it is one SQL statement and needs no redeploy.
  *
  * IDEMPOTENCE. A notice is marked `sending` before the push and `sent` after.
  * A crash in between leaves it `sending` and it is NOT retried automatically —
@@ -43,26 +51,42 @@ type ExpoTicket = {
 
 Deno.serve(async (req: Request) => {
   try {
-    const secret = Deno.env.get('PUSH_WORKER_SECRET');
-    if (!secret) {
-      // Refuse rather than run open. A misconfigured worker that still sends is
-      // worse than one that does not.
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Ask Postgres whether the presented secret is the right one. The stored
+    // value never comes back over this call — only a verdict.
+    const { data: verdict, error: authError } = await supabase.rpc('check_push_worker_secret', {
+      p_secret: req.headers.get('x-worker-secret') ?? '',
+    });
+
+    if (authError) {
+      // Could not check, so do not send. Failing closed is the only safe
+      // direction for something that pushes to real handsets.
       return new Response(
-        JSON.stringify({ error: 'PUSH_WORKER_SECRET is not configured for this project' }),
+        JSON.stringify({ error: `Could not verify the worker secret: ${authError.message}` }),
         { status: 503, headers: { 'Content-Type': 'application/json' } },
       );
     }
-    if (req.headers.get('x-worker-secret') !== secret) {
+
+    if (verdict === 'not_configured') {
+      return new Response(
+        JSON.stringify({
+          error:
+            'No push_worker_secret in Vault. Apply migration 0040, which generates one.',
+        }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (verdict !== 'ok') {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       });
     }
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    );
 
     const { data: queue, error: queueError } = await supabase.rpc('pending_push_notices', {
       p_limit: 200,
